@@ -1,0 +1,171 @@
+import 'dart:convert';
+import 'dart:async';
+import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:uuid/uuid.dart';
+import '../models/message.dart';
+
+class WebSocketService {
+  static const String _baseUrl = 'ws://localhost:8081/ws';
+  WebSocketChannel? _channel;
+  final StreamController<ChatMessage> _messageController = StreamController<ChatMessage>.broadcast();
+  final Map<String, Completer<Map<String, dynamic>>> _pendingRequests = {};
+  final Uuid _uuid = const Uuid();
+  bool _isConnected = false;
+
+  Stream<ChatMessage> get messageStream => _messageController.stream;
+  bool get isConnected => _isConnected;
+
+  Future<void> connect() async {
+    try {
+      _channel = WebSocketChannel.connect(Uri.parse(_baseUrl));
+      _isConnected = true;
+      
+      _channel!.stream.listen(
+        _handleMessage,
+        onError: (error) {
+          print('WebSocket error: $error');
+          _isConnected = false;
+          _handleDisconnection();
+        },
+        onDone: () {
+          print('WebSocket connection closed');
+          _isConnected = false;
+          _handleDisconnection();
+        },
+      );
+      
+      print('Connected to WebSocket at $_baseUrl');
+    } catch (error) {
+      print('Failed to connect to WebSocket: $error');
+      _isConnected = false;
+      throw Exception('Failed to connect to Juno backend');
+    }
+  }
+
+  void _handleMessage(dynamic data) {
+    try {
+      final Map<String, dynamic> message = json.decode(data);
+      print('Received WebSocket message: $message');
+      
+      // Handle MCP JSON-RPC responses
+      if (message.containsKey('id') && message.containsKey('result')) {
+        final String id = message['id'];
+        if (_pendingRequests.containsKey(id)) {
+          _pendingRequests[id]!.complete(message['result']);
+          _pendingRequests.remove(id);
+        }
+        
+        // Also send to UI if it's a chat response
+        if (message['result'] is Map && message['result']['response'] != null) {
+          final chatMessage = ChatMessage(
+            id: _uuid.v4(),
+            text: message['result']['response'],
+            isUser: false,
+            timestamp: DateTime.now(),
+          );
+          _messageController.add(chatMessage);
+        }
+      }
+      
+      // Handle direct chat messages (for future use)
+      if (message.containsKey('text') && message.containsKey('isUser')) {
+        final chatMessage = ChatMessage.fromJson(message);
+        _messageController.add(chatMessage);
+      }
+    } catch (error) {
+      print('Error parsing WebSocket message: $error');
+    }
+  }
+
+  void _handleDisconnection() {
+    // Complete pending requests with error
+    for (final completer in _pendingRequests.values) {
+      completer.completeError('WebSocket disconnected');
+    }
+    _pendingRequests.clear();
+    
+    // Optionally attempt reconnection
+    _attemptReconnection();
+  }
+
+  Future<void> _attemptReconnection() async {
+    await Future.delayed(const Duration(seconds: 3));
+    if (!_isConnected) {
+      try {
+        await connect();
+      } catch (error) {
+        print('Reconnection failed: $error');
+        // Try again after delay
+        _attemptReconnection();
+      }
+    }
+  }
+
+  Future<String> sendMessage(String message) async {
+    if (!_isConnected || _channel == null) {
+      throw Exception('Not connected to backend');
+    }
+
+    // Add user message to stream immediately
+    final userMessage = ChatMessage(
+      id: _uuid.v4(),
+      text: message,
+      isUser: true,
+      timestamp: DateTime.now(),
+    );
+    _messageController.add(userMessage);
+
+    // Create MCP JSON-RPC message
+    final String requestId = _uuid.v4();
+    final Map<String, dynamic> mcpMessage = {
+      'jsonrpc': '2.0',
+      'method': 'process_query',
+      'params': {
+        'query': message,
+        'user_id': 'default_user', // TODO: Add real user management
+      },
+      'id': requestId,
+    };
+
+    // Set up response handler
+    final Completer<Map<String, dynamic>> completer = Completer<Map<String, dynamic>>();
+    _pendingRequests[requestId] = completer;
+
+    // Send message
+    _channel!.sink.add(json.encode(mcpMessage));
+    print('Sent WebSocket message: $mcpMessage');
+
+    try {
+      // Wait for response with timeout
+      final response = await completer.future.timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          _pendingRequests.remove(requestId);
+          throw Exception('Request timeout');
+        },
+      );
+      
+      return response['response'] ?? 'No response received';
+    } catch (error) {
+      print('Error getting response: $error');
+      rethrow;
+    }
+  }
+
+  void disconnect() {
+    _isConnected = false;
+    _channel?.sink.close();
+    _channel = null;
+    
+    // Complete pending requests with error
+    for (final completer in _pendingRequests.values) {
+      completer.completeError('Connection closed by user');
+    }
+    _pendingRequests.clear();
+  }
+
+  void dispose() {
+    disconnect();
+    _messageController.close();
+  }
+}
