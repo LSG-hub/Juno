@@ -72,6 +72,13 @@ User C ──┘                 ├── Fi Connection B (SessionId B, Phone: 
      * App bar style with gradient avatar and "Juno" branding
      * Input field styling from chat input area with rounded corners
      * Elevation and shadow patterns from existing containers
+   - **Dropdown Design**: Liquid Glass/Glassmorphism Effect
+     * Semi-transparent background with backdrop blur (`BackdropFilter`)
+     * Subtle gradient overlay matching purple theme
+     * Smooth rounded corners and soft shadows
+     * Animated transitions for open/close states
+     * Glass-like border with opacity
+     * Placement: AppBar next to Juno title
    - Update WebSocket protocol to include `userId` in messages
    - UI element to select "user" for testing different Fi datasets
 
