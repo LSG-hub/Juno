@@ -47,13 +47,75 @@
 
 ## PENDING TASKS 📋
 
+### PRIORITY 1: Multi-User Support (CRITICAL FOR PRODUCTION)
+- **Challenge**: Current system has 1 persistent Fi connection = 1 user session
+- **Problem**: Multiple users would share same Fi account data (security/privacy issue)
+- **Solution**: Pool of Persistent Clients (Per-User Fi Connections)
+
+#### Multi-User Architecture Plan:
+**Implementation Approach: Per-User Fi Client Pool**
+```
+User A ──┐
+User B ──┤── Coordinator ──┤── Fi Connection A (SessionId A, Phone: 1111111111)
+User C ──┘                 ├── Fi Connection B (SessionId B, Phone: 2222222222)  
+                           └── Fi Connection C (SessionId C, Phone: 3333333333)
+```
+
+#### Changes Required:
+1. **Mobile App User Selection**
+   - Add dropdown with 16 test phone numbers (1010101010 to 9999999999)
+   - **IMPORTANT**: Use same UI theme, design, and Material 3 components as existing app
+   - Follow existing design patterns from ChatScreen (colors, spacing, typography)
+   - Integrate seamlessly with current purple gradient theme and card designs
+   - **Design References**: 
+     * Color scheme: `ColorScheme.fromSeed(seedColor: Color(0xFF6750A4))` (Material Purple)
+     * App bar style with gradient avatar and "Juno" branding
+     * Input field styling from chat input area with rounded corners
+     * Elevation and shadow patterns from existing containers
+   - Update WebSocket protocol to include `userId` in messages
+   - UI element to select "user" for testing different Fi datasets
+
+2. **Coordinator Client Pool**
+   ```go
+   type CoordinatorServer struct {
+       // ... existing fields
+       fiClients map[string]*client.Client // Pool of Fi clients per user
+       clientsMu sync.Mutex                // Thread safety for concurrent users
+   }
+   ```
+
+3. **Dynamic Client Management**
+   - `getOrCreateFiClient(userId string)` method
+   - Check fiClients map for existing client per user
+   - Create new persistent client if not exists
+   - Automatic login_required handling per user session
+
+4. **Session Isolation Benefits**
+   - Each user gets own persistent Fi connection
+   - Complete data isolation (no cross-user data leakage)
+   - Scalable to hundreds/thousands of concurrent users
+   - Maintains performance benefits of persistent connections
+
+5. **Testing Infrastructure**
+   - Test all 16 Fi phone number datasets independently
+   - Verify session isolation between concurrent users
+   - Load testing with multiple simultaneous users
+
+#### Implementation Priority:
+- **Phase 1**: Mobile app user selection UI (foundation)
+- **Phase 2**: Coordinator client pool implementation
+- **Phase 3**: Dynamic client management with thread safety
+- **Phase 4**: Testing with all 16 datasets simultaneously
+
 ### PRIORITY 2: Error Handling
 - **Task**: Add proper error handling for Fi connection issues
 - **Task**: Add reconnection logic for dropped Fi connections
+- **Task**: Handle client pool cleanup and resource management
 
-### PRIORITY 3: Testing
-- **Task**: Test complete end-to-end flow after session fix
-- **Test Case**: User asks "What's my net worth?" → Login once → Subsequent requests work without re-login
+### PRIORITY 3: Production Readiness
+- **Task**: Load testing with concurrent users
+- **Task**: Memory management for client pool
+- **Task**: Client connection health monitoring
 
 ## CURRENT ARCHITECTURE ✅
 
