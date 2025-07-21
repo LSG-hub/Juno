@@ -27,8 +27,8 @@ RUN flutter config --enable-web
 # Set working directory for app
 WORKDIR /home/developer/app
 
-# Copy pubspec files first for dependency caching
-COPY --chown=developer:developer pubspec.yaml pubspec.lock ./
+# Copy pubspec file first for dependency caching
+COPY --chown=developer:developer pubspec.yaml ./
 
 # Get dependencies
 RUN flutter pub get

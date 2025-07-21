@@ -17,6 +17,10 @@ class ChatProvider extends ChangeNotifier {
   bool get isTyping => _isTyping;
 
   ChatProvider() {
+    // Initialize automatically
+  }
+
+  void initialize() {
     _initializeWebSocket();
   }
 
@@ -55,7 +59,7 @@ class ChatProvider extends ChangeNotifier {
   void _addWelcomeMessage() {
     final welcomeMessage = ChatMessage(
       id: 'welcome',
-      text: "Hello! I'm Juno, your AI financial assistant. I can help you with spending analysis, financial planning, and much more. How can I assist you today?",
+      text: "Hello! I'm Juno, your AI financial assistant. I can help you access your financial data through Fi Money. How can I help you today?",
       isUser: false,
       timestamp: DateTime.now(),
     );

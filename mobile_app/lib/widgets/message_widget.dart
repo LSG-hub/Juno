@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/message.dart';
 
 class MessageWidget extends StatelessWidget {
@@ -127,6 +128,12 @@ class MessageWidget extends StatelessWidget {
               height: 1.4,
             ),
           ),
+          // Show login button for login_required messages
+          if (_isLoginRequiredMessage())
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: _buildLoginButton(theme),
+            ),
           if (message.status == MessageStatus.sending)
             Padding(
               padding: const EdgeInsets.only(top: 8),
@@ -199,5 +206,46 @@ class MessageWidget extends StatelessWidget {
       return theme.colorScheme.onPrimary;
     }
     return theme.colorScheme.onSurface;
+  }
+
+  bool _isLoginRequiredMessage() {
+    return message.metadata != null && 
+           message.metadata!['type'] == 'login_required';
+  }
+
+  Widget _buildLoginButton(ThemeData theme) {
+    final loginUrl = message.metadata?['login_url'] ?? '';
+    
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton.icon(
+        onPressed: () => _launchLoginUrl(loginUrl),
+        icon: const Icon(Icons.login, size: 18),
+        label: const Text('Login to Fi Money'),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: theme.colorScheme.primary,
+          foregroundColor: theme.colorScheme.onPrimary,
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _launchLoginUrl(String url) async {
+    if (url.isEmpty) return;
+    
+    try {
+      final uri = Uri.parse(url);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        debugPrint('Could not launch $url');
+      }
+    } catch (e) {
+      debugPrint('Error launching URL: $e');
+    }
   }
 }

@@ -17,6 +17,15 @@ class _ChatScreenState extends State<ChatScreen> {
   final FocusNode _focusNode = FocusNode();
 
   @override
+  void initState() {
+    super.initState();
+    // Initialize chat provider
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<ChatProvider>().initialize();
+    });
+  }
+
+  @override
   void dispose() {
     _textController.dispose();
     _scrollController.dispose();

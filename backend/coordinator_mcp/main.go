@@ -8,20 +8,22 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/mark3labs/mcp-go/client"
 )
 
 type CoordinatorServer struct {
-	mcpServer       *server.MCPServer
-	anthropicAPIKey string
-	fiMCPURL        string
-	contextAgentURL string
+	mcpServer        *server.MCPServer
+	anthropicAPIKey  string
+	fiMCPURL         string
+	contextAgentURL  string
 	securityAgentURL string
-	upgrader        websocket.Upgrader
+	upgrader         websocket.Upgrader
 }
 
 type ChatMessage struct {
@@ -96,6 +98,17 @@ func (cs *CoordinatorServer) setupMCPServer() {
 		),
 		cs.handleGetContext,
 	)
+
+	cs.mcpServer.AddTool(
+		mcp.NewTool("fetch_financial_data",
+			mcp.WithDescription("Fetch financial data from Fi MCP server"),
+			mcp.WithString("tool_name",
+				mcp.Description("Name of Fi tool to call (e.g., fetch_net_worth, fetch_bank_transactions)"),
+				mcp.Required(),
+			),
+		),
+		cs.handleFetchFinancialData,
+	)
 }
 
 func (cs *CoordinatorServer) handleProcessQuery(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -113,8 +126,8 @@ func (cs *CoordinatorServer) handleProcessQuery(ctx context.Context, request mcp
 		}, nil
 	}
 
-	// Call Claude API for intelligent response
-	response, err := cs.callClaudeAPI(query)
+	// Call Claude API with tools for intelligent response
+	response, err := cs.callClaudeAPIWithTools(query)
 	if err != nil {
 		log.Printf("Error calling Claude API: %v", err)
 		return &mcp.CallToolResult{
@@ -180,20 +193,186 @@ func (cs *CoordinatorServer) handleGetContext(ctx context.Context, request mcp.C
 	}, nil
 }
 
-func (cs *CoordinatorServer) callClaudeAPI(query string) (string, error) {
+func (cs *CoordinatorServer) handleFetchFinancialData(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	arguments := request.GetArguments()
+	toolName, ok := arguments["tool_name"].(string)
+	if !ok || toolName == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: "Error: Missing or invalid tool_name parameter",
+				},
+			},
+			IsError: true,
+		}, nil
+	}
+
+	// Call Fi MCP server
+	response, err := cs.callFiMCP(toolName)
+	if err != nil {
+		log.Printf("Error calling Fi MCP: %v", err)
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: fmt.Sprintf("Error fetching financial data: %v", err),
+				},
+			},
+			IsError: true,
+		}, nil
+	}
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: response,
+			},
+		},
+	}, nil
+}
+
+// Simple Fi MCP tool call - let Fi handle authentication via browser
+func (cs *CoordinatorServer) callFiMCPTool(toolName string) (*mcp.CallToolResult, error) {
+	// Create a fresh MCP client for each call (simple approach)
+	mcpClient, err := client.NewStreamableHttpClient(cs.fiMCPURL + "/mcp/")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create MCP client: %w", err)
+	}
+	defer mcpClient.Close()
+
+	// Start and initialize the MCP client
+	ctx := context.Background()
+	if err := mcpClient.Start(ctx); err != nil {
+		return nil, fmt.Errorf("failed to start MCP client: %w", err)
+	}
+	
+	initRequest := mcp.InitializeRequest{
+		Params: mcp.InitializeParams{
+			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
+			ClientInfo: mcp.Implementation{
+				Name:    "coordinator-mcp",
+				Version: "0.1.0",
+			},
+		},
+	}
+	_, err = mcpClient.Initialize(ctx, initRequest)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize MCP client: %w", err)
+	}
+
+	// Call the Fi tool
+	toolArgs := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      toolName,
+			Arguments: map[string]interface{}{},
+		},
+	}
+	result, err := mcpClient.CallTool(ctx, toolArgs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call Fi MCP tool %s: %w", toolName, err)
+	}
+
+	return result, nil
+}
+
+func (cs *CoordinatorServer) callFiMCP(toolName string) (string, error) {
+	// Call Fi tool (will return login_required if not authenticated)
+	result, err := cs.callFiMCPTool(toolName)
+	if err != nil {
+		return "", err
+	}
+
+	// Extract text content from result
+	var responseText strings.Builder
+	for _, content := range result.Content {
+		if textContent, ok := content.(mcp.TextContent); ok {
+			responseText.WriteString(textContent.Text)
+		}
+	}
+
+	resultText := responseText.String()
+	if resultText == "" {
+		return fmt.Sprintf("Fi MCP Result: %v", result.Content), nil
+	}
+
+	// Check if this is a login_required response
+	if strings.Contains(resultText, "login_required") {
+		log.Printf("Fi requires authentication for tool: %s", toolName)
+		// Return the login_required response as-is so mobile app can handle it
+		return resultText, nil
+	}
+
+	// Regular successful response
+	return resultText, nil
+}
+
+// Claude API request with tool calls support
+func (cs *CoordinatorServer) callClaudeAPIWithTools(query string) (string, error) {
 	if cs.anthropicAPIKey == "" {
 		return "Hello! I'm Juno, your financial AI assistant. I'm currently running in demo mode. How can I help you with your finances today?", nil
 	}
 
-	requestBody := AnthropicRequest{
-		Model:     "claude-3-5-sonnet-20241022",
-		MaxTokens: 1000,
-		Messages: []ChatMessage{
-			{
-				Role:    "user",
-				Content: fmt.Sprintf("You are Juno, a helpful financial AI assistant. Please provide a helpful response to this financial query: %s", query),
+	// Define Fi tools available to Claude
+	tools := []map[string]interface{}{
+		{
+			"name": "fetch_net_worth",
+			"description": "Fetch user's comprehensive net worth including assets, liabilities, and total wealth",
+			"input_schema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{},
+				"required": []string{},
 			},
 		},
+		{
+			"name": "fetch_bank_transactions",
+			"description": "Fetch user's bank transaction history and account details",
+			"input_schema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{},
+				"required": []string{},
+			},
+		},
+		{
+			"name": "fetch_mf_transactions",
+			"description": "Fetch user's mutual fund transactions and investment details",
+			"input_schema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{},
+				"required": []string{},
+			},
+		},
+		{
+			"name": "fetch_credit_report",
+			"description": "Fetch user's credit report including credit score, loan details, and account history",
+			"input_schema": map[string]interface{}{
+				"type": "object", 
+				"properties": map[string]interface{}{},
+				"required": []string{},
+			},
+		},
+		{
+			"name": "fetch_epf_details",
+			"description": "Fetch user's Employee Provident Fund (EPF) details and balance",
+			"input_schema": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{},
+				"required": []string{},
+			},
+		},
+	}
+
+	requestBody := map[string]interface{}{
+		"model":      "claude-3-5-sonnet-20241022",
+		"max_tokens": 1000,
+		"messages": []map[string]interface{}{
+			{
+				"role":    "user",
+				"content": fmt.Sprintf("You are Juno, a helpful financial AI assistant with access to the user's financial data through Fi Money. Please provide a helpful response to this query: %s", query),
+			},
+		},
+		"tools": tools,
 	}
 
 	jsonData, err := json.Marshal(requestBody)
@@ -221,17 +400,140 @@ func (cs *CoordinatorServer) callClaudeAPI(query string) (string, error) {
 		return "", fmt.Errorf("API returned status %d", resp.StatusCode)
 	}
 
-	var anthropicResp AnthropicResponse
+	var anthropicResp map[string]interface{}
 	if err := json.NewDecoder(resp.Body).Decode(&anthropicResp); err != nil {
 		return "", fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	if len(anthropicResp.Content) > 0 && anthropicResp.Content[0].Type == "text" {
-		return anthropicResp.Content[0].Text, nil
+	// Handle tool calls if Claude wants to call Fi tools
+	if content, ok := anthropicResp["content"].([]interface{}); ok {
+		var finalResponse strings.Builder
+		
+		for _, item := range content {
+			if contentItem, ok := item.(map[string]interface{}); ok {
+				if contentItem["type"] == "text" {
+					if text, exists := contentItem["text"]; exists {
+						finalResponse.WriteString(fmt.Sprintf("%v", text))
+					}
+				} else if contentItem["type"] == "tool_use" {
+					// Claude wants to call a tool
+					toolName, _ := contentItem["name"].(string)
+					toolId, _ := contentItem["id"].(string)
+					
+					// Call Fi MCP tool
+					toolResult, err := cs.callFiMCP(toolName)
+					if err != nil {
+						log.Printf("Error calling Fi tool %s: %v", toolName, err)
+						toolResult = fmt.Sprintf("Error accessing %s data", toolName)
+					}
+					
+					// Check if Fi returned login_required - if so, return it directly without Claude processing
+					if strings.Contains(toolResult, "login_required") {
+						return toolResult, nil
+					}
+					
+					// Continue conversation with tool result
+					followUpResponse, err := cs.callClaudeAPIWithToolResult(query, toolName, toolId, toolResult)
+					if err != nil {
+						log.Printf("Error in follow-up call: %v", err)
+						finalResponse.WriteString(fmt.Sprintf("\nI retrieved your %s data but had trouble processing it.", toolName))
+					} else {
+						finalResponse.WriteString(followUpResponse)
+					}
+				}
+			}
+		}
+		
+		result := finalResponse.String()
+		if result != "" {
+			return result, nil
+		}
 	}
 
 	return "I'm having trouble generating a response right now. Please try again.", nil
 }
+
+// Follow-up call to Claude with tool result
+func (cs *CoordinatorServer) callClaudeAPIWithToolResult(originalQuery, toolName, toolId, toolResult string) (string, error) {
+	requestBody := map[string]interface{}{
+		"model":      "claude-3-5-sonnet-20241022", 
+		"max_tokens": 1000,
+		"messages": []map[string]interface{}{
+			{
+				"role":    "user",
+				"content": fmt.Sprintf("You are Juno, a helpful financial AI assistant. The user asked: %s", originalQuery),
+			},
+			{
+				"role": "assistant",
+				"content": []map[string]interface{}{
+					{
+						"type": "tool_use",
+						"id":   toolId,
+						"name": toolName,
+						"input": map[string]interface{}{},
+					},
+				},
+			},
+			{
+				"role": "user",
+				"content": []map[string]interface{}{
+					{
+						"type":       "tool_result",
+						"tool_use_id": toolId,
+						"content":    toolResult,
+					},
+				},
+			},
+		},
+	}
+
+	jsonData, err := json.Marshal(requestBody)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal follow-up request: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("failed to create follow-up request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-api-key", cs.anthropicAPIKey) 
+	req.Header.Set("anthropic-version", "2023-06-01")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to make follow-up request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("follow-up API returned status %d", resp.StatusCode)
+	}
+
+	var anthropicResp map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&anthropicResp); err != nil {
+		return "", fmt.Errorf("failed to decode follow-up response: %w", err)
+	}
+
+	// Extract text response
+	if content, ok := anthropicResp["content"].([]interface{}); ok {
+		for _, item := range content {
+			if contentItem, ok := item.(map[string]interface{}); ok {
+				if contentItem["type"] == "text" {
+					if text, exists := contentItem["text"]; exists {
+						return fmt.Sprintf("%v", text), nil
+					}
+				}
+			}
+		}
+	}
+
+	return "I retrieved your financial data but had trouble processing it.", nil
+}
+
+
 
 func (cs *CoordinatorServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := cs.upgrader.Upgrade(w, r, nil)
@@ -295,10 +597,11 @@ func (cs *CoordinatorServer) processWebSocketQuery(msg MCPMessage) MCPMessage {
 		}
 	}
 
-	// Process query with Claude API
-	response, err := cs.callClaudeAPI(query)
+	// Process query with Claude API + Fi tools available
+	// Fi will handle authentication via login flow
+	response, err := cs.callClaudeAPIWithTools(query)
 	if err != nil {
-		log.Printf("Error calling Claude API: %v", err)
+		log.Printf("Error calling Claude API with tools: %v", err)
 		response = "I'm having trouble processing your request right now. Please try again."
 	}
 

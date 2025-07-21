@@ -4,6 +4,7 @@ class ChatMessage {
   final bool isUser;
   final DateTime timestamp;
   final MessageStatus status;
+  final Map<String, dynamic>? metadata;
 
   ChatMessage({
     required this.id,
@@ -11,6 +12,7 @@ class ChatMessage {
     required this.isUser,
     required this.timestamp,
     this.status = MessageStatus.sent,
+    this.metadata,
   });
 
   ChatMessage.fromJson(Map<String, dynamic> json)
@@ -21,7 +23,8 @@ class ChatMessage {
         status = MessageStatus.values.firstWhere(
           (status) => status.toString() == 'MessageStatus.${json['status']}',
           orElse: () => MessageStatus.sent,
-        );
+        ),
+        metadata = json['metadata'];
 
   Map<String, dynamic> toJson() {
     return {
@@ -30,6 +33,7 @@ class ChatMessage {
       'isUser': isUser,
       'timestamp': timestamp.toIso8601String(),
       'status': status.toString().split('.').last,
+      'metadata': metadata,
     };
   }
 
@@ -39,6 +43,7 @@ class ChatMessage {
     bool? isUser,
     DateTime? timestamp,
     MessageStatus? status,
+    Map<String, dynamic>? metadata,
   }) {
     return ChatMessage(
       id: id ?? this.id,
@@ -46,6 +51,7 @@ class ChatMessage {
       isUser: isUser ?? this.isUser,
       timestamp: timestamp ?? this.timestamp,
       status: status ?? this.status,
+      metadata: metadata ?? this.metadata,
     );
   }
 }

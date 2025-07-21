@@ -62,13 +62,20 @@ class WebSocketService {
         
         // Also send to UI if it's a chat response
         if (message['result'] is Map && message['result']['response'] != null) {
-          final chatMessage = ChatMessage(
-            id: _uuid.v4(),
-            text: message['result']['response'],
-            isUser: false,
-            timestamp: DateTime.now(),
-          );
-          _messageController.add(chatMessage);
+          final responseText = message['result']['response'];
+          
+          // Check if this is a login_required response from Fi
+          if (_isLoginRequiredResponse(responseText)) {
+            _handleLoginRequired(responseText);
+          } else {
+            final chatMessage = ChatMessage(
+              id: _uuid.v4(),
+              text: responseText,
+              isUser: false,
+              timestamp: DateTime.now(),
+            );
+            _messageController.add(chatMessage);
+          }
         }
       }
       
@@ -127,7 +134,6 @@ class WebSocketService {
       'method': 'process_query',
       'params': {
         'query': message,
-        'user_id': 'default_user', // TODO: Add real user management
       },
       'id': requestId,
     };
@@ -167,6 +173,48 @@ class WebSocketService {
       completer.completeError('Connection closed by user');
     }
     _pendingRequests.clear();
+  }
+
+  bool _isLoginRequiredResponse(String response) {
+    try {
+      final decoded = json.decode(response);
+      return decoded is Map && decoded['status'] == 'login_required';
+    } catch (e) {
+      return false;
+    }
+  }
+  
+  void _handleLoginRequired(String response) {
+    try {
+      final decoded = json.decode(response);
+      final loginUrl = decoded['login_url'] ?? '';
+      final message = decoded['message'] ?? 'Please login to access your financial data.';
+      
+      print('Login required. URL: $loginUrl');
+      
+      // Create a special login_required message for the UI
+      final loginMessage = ChatMessage(
+        id: _uuid.v4(),
+        text: message,
+        isUser: false,
+        timestamp: DateTime.now(),
+        metadata: {
+          'type': 'login_required',
+          'login_url': loginUrl,
+        },
+      );
+      _messageController.add(loginMessage);
+    } catch (e) {
+      print('Error parsing login_required response: $e');
+      // Fallback: show the raw response
+      final chatMessage = ChatMessage(
+        id: _uuid.v4(),
+        text: response,
+        isUser: false,
+        timestamp: DateTime.now(),
+      );
+      _messageController.add(chatMessage);
+    }
   }
 
   void dispose() {
