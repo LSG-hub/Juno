@@ -1,0 +1,117 @@
+# Juno Financial Assistant - Development Status
+
+## COMPLETED TASKS ✅
+
+### 1. Docker Build Fix
+- **Fixed**: Mobile app Dockerfile - removed pubspec.lock from COPY command
+- **File**: `/mobile_app/Dockerfile`
+- **Issue**: pubspec.lock wasn't generated yet during Docker build
+
+### 2. Architecture Simplification  
+- **Removed**: User selection screen - direct navigation to ChatScreen
+- **Files**: `/mobile_app/lib/main.dart`, `/mobile_app/lib/screens/chat_screen.dart`
+- **Deleted**: `/mobile_app/lib/screens/user_selection_screen.dart`
+
+### 3. MCP Protocol Implementation
+- **Fixed**: Proper MCP tool calling instead of keyword detection
+- **File**: `/backend/coordinator_mcp/main.go`
+- **Change**: Coordinator now calls Claude API with Fi tools exposed, Claude decides when to call Fi
+
+### 4. Authentication Flow
+- **Implemented**: Browser-based Fi authentication
+- **Files**: `/mobile_app/lib/services/websocket_service.dart`, `/mobile_app/lib/widgets/message_widget.dart`
+- **Flow**: Fi returns login_required → Mobile app shows login button → Opens browser
+
+### 5. Code Cleanup (Recently Completed)
+- **Removed**: Unused `callClaudeAPI()` function
+- **Removed**: Unused phone number parameters from all Fi tool definitions
+- **Fixed**: MCP client API usage - `NewStreamableHttpClient` and proper `CallToolRequest` struct
+- **Fixed**: Function signatures to remove phone number parameters throughout
+
+### 6. Login Required Response Fix
+- **Fixed**: login_required responses now bypass Claude processing
+- **File**: `/backend/coordinator_mcp/main.go:431-433`
+- **Change**: When Fi returns login_required JSON, pass it directly to mobile app instead of letting Claude convert to text
+
+## RECENTLY COMPLETED ✅
+
+### 7. Session Persistence Fix (MAJOR SUCCESS!)
+- **FIXED**: User can now login once and stay logged in for subsequent requests
+- **Solution**: Implemented persistent Fi MCP client connection
+- **Files Modified**: `/backend/coordinator_mcp/main.go`
+- **Changes Made**:
+  1. ✅ Added `fiMCPClient *client.Client` to CoordinatorServer struct
+  2. ✅ Added `initializeFiClient()` method called once at startup
+  3. ✅ Replaced `callFiMCPTool()` to use persistent client (no more `defer Close()`)
+  4. ✅ Session now maintained across all requests - LOGIN WORKS!
+
+## PENDING TASKS 📋
+
+### PRIORITY 2: Error Handling
+- **Task**: Add proper error handling for Fi connection issues
+- **Task**: Add reconnection logic for dropped Fi connections
+
+### PRIORITY 3: Testing
+- **Task**: Test complete end-to-end flow after session fix
+- **Test Case**: User asks "What's my net worth?" → Login once → Subsequent requests work without re-login
+
+## CURRENT ARCHITECTURE ✅
+
+### Mobile App Flow
+1. App starts → ChatScreen directly (no user selection)
+2. ChatProvider initializes → WebSocket connects to coordinator
+3. User message → WebSocket JSON-RPC → Coordinator
+
+### Coordinator Flow  
+1. Receives process_query → Calls Claude API with Fi tools available
+2. Claude detects financial query → Calls fetch_net_worth tool
+3. Coordinator calls Fi MCP → Fi returns login_required OR data
+4. Response flows back to mobile app
+
+### Authentication Flow
+1. Fi returns login_required JSON with sessionId
+2. Mobile app detects login_required → Shows "Login to Fi Money" button  
+3. Button opens Fi login page in browser → User logs in
+4. **ISSUE**: Next request creates new session, loses login
+
+## FILES MODIFIED
+
+### Mobile App
+- `/mobile_app/Dockerfile` - Fixed pubspec.lock issue
+- `/mobile_app/lib/main.dart` - Direct ChatScreen navigation
+- `/mobile_app/lib/screens/chat_screen.dart` - Removed user parameters
+- `/mobile_app/lib/services/websocket_service.dart` - Added login_required handling
+- `/mobile_app/lib/widgets/message_widget.dart` - Added login button
+- **DELETED**: `/mobile_app/lib/screens/user_selection_screen.dart`
+
+### Backend Coordinator
+- `/backend/coordinator_mcp/main.go` - Multiple fixes:
+  - Fixed MCP client API usage
+  - Removed unused functions and parameters  
+  - Added login_required response bypass
+  - **NEEDS**: Persistent Fi client implementation
+
+## ENVIRONMENT
+- **Working Directory**: `/Users/sreenivasg/Desktop/Projects/Juno/backend/coordinator_mcp`
+- **Docker**: Use `docker-compose build --no-cache && docker-compose up`
+- **Test Data**: Fi has test phone numbers like 1111111111, any OTP works
+
+## NEXT SESSION INSTRUCTIONS
+1. Read this TODO.txt file first
+2. Read `/Users/sreenivasg/Desktop/Projects/Juno/backend/coordinator_mcp/main.go` 
+3. Focus on `callFiMCPTool()` function - this creates new clients each time
+4. Implement persistent Fi MCP client to maintain login sessions
+5. Test the complete login flow end-to-end
+
+## TESTING COMMANDS
+```bash
+# Rebuild and test
+cd /Users/sreenivasg/Desktop/Projects/Juno
+docker-compose build --no-cache && docker-compose up
+
+# Test login
+# 1. Open mobile app at http://localhost:3000
+# 2. Ask "What's my net worth?"  
+# 3. Click login button, use phone: 1111111111, OTP: 123456
+# 4. Return to chat, ask again - should NOT ask for login again
+```

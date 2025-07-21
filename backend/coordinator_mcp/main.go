@@ -24,6 +24,7 @@ type CoordinatorServer struct {
 	contextAgentURL  string
 	securityAgentURL string
 	upgrader         websocket.Upgrader
+	fiMCPClient      *client.Client // Persistent Fi MCP client
 }
 
 type ChatMessage struct {
@@ -54,7 +55,7 @@ type MCPMessage struct {
 }
 
 func NewCoordinatorServer() *CoordinatorServer {
-	return &CoordinatorServer{
+	cs := &CoordinatorServer{
 		anthropicAPIKey:  os.Getenv("ANTHROPIC_API_KEY"),
 		fiMCPURL:        getEnvWithDefault("FI_MCP_URL", "http://fi-mcp-server:8080"),
 		contextAgentURL:  getEnvWithDefault("CONTEXT_AGENT_URL", "http://context-agent-mcp:8082"),
@@ -65,6 +66,47 @@ func NewCoordinatorServer() *CoordinatorServer {
 			},
 		},
 	}
+	
+	// Initialize persistent Fi MCP client
+	cs.initializeFiClient()
+	
+	return cs
+}
+
+func (cs *CoordinatorServer) initializeFiClient() {
+	var err error
+	cs.fiMCPClient, err = client.NewStreamableHttpClient(cs.fiMCPURL + "/mcp/")
+	if err != nil {
+		log.Printf("Warning: Failed to create persistent Fi MCP client: %v", err)
+		return
+	}
+	
+	// Start and initialize the persistent Fi MCP client
+	ctx := context.Background()
+	if err := cs.fiMCPClient.Start(ctx); err != nil {
+		log.Printf("Warning: Failed to start persistent Fi MCP client: %v", err)
+		cs.fiMCPClient = nil
+		return
+	}
+	
+	initRequest := mcp.InitializeRequest{
+		Params: mcp.InitializeParams{
+			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
+			ClientInfo: mcp.Implementation{
+				Name:    "coordinator-mcp",
+				Version: "0.1.0",
+			},
+		},
+	}
+	_, err = cs.fiMCPClient.Initialize(ctx, initRequest)
+	if err != nil {
+		log.Printf("Warning: Failed to initialize persistent Fi MCP client: %v", err)
+		cs.fiMCPClient.Close()
+		cs.fiMCPClient = nil
+		return
+	}
+	
+	log.Printf("Successfully initialized persistent Fi MCP client")
 }
 
 func (cs *CoordinatorServer) setupMCPServer() {
@@ -233,43 +275,22 @@ func (cs *CoordinatorServer) handleFetchFinancialData(ctx context.Context, reque
 	}, nil
 }
 
-// Simple Fi MCP tool call - let Fi handle authentication via browser
+// Fi MCP tool call using persistent client to maintain session
 func (cs *CoordinatorServer) callFiMCPTool(toolName string) (*mcp.CallToolResult, error) {
-	// Create a fresh MCP client for each call (simple approach)
-	mcpClient, err := client.NewStreamableHttpClient(cs.fiMCPURL + "/mcp/")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create MCP client: %w", err)
+	// Check if persistent client is available
+	if cs.fiMCPClient == nil {
+		return nil, fmt.Errorf("persistent Fi MCP client not available")
 	}
-	defer mcpClient.Close()
 
-	// Start and initialize the MCP client
+	// Call the Fi tool using persistent client (maintains session)
 	ctx := context.Background()
-	if err := mcpClient.Start(ctx); err != nil {
-		return nil, fmt.Errorf("failed to start MCP client: %w", err)
-	}
-	
-	initRequest := mcp.InitializeRequest{
-		Params: mcp.InitializeParams{
-			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
-			ClientInfo: mcp.Implementation{
-				Name:    "coordinator-mcp",
-				Version: "0.1.0",
-			},
-		},
-	}
-	_, err = mcpClient.Initialize(ctx, initRequest)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize MCP client: %w", err)
-	}
-
-	// Call the Fi tool
-	toolArgs := mcp.CallToolRequest{
+	toolRequest := mcp.CallToolRequest{
 		Params: mcp.CallToolParams{
 			Name:      toolName,
 			Arguments: map[string]interface{}{},
 		},
 	}
-	result, err := mcpClient.CallTool(ctx, toolArgs)
+	result, err := cs.fiMCPClient.CallTool(ctx, toolRequest)
 	if err != nil {
 		return nil, fmt.Errorf("failed to call Fi MCP tool %s: %w", toolName, err)
 	}
