@@ -71,16 +71,16 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> sendMessage(String text) async {
+  Future<void> sendMessage(String text, String userId) async {
     if (text.trim().isEmpty || !_isConnected) return;
 
     try {
       _isTyping = true;
       notifyListeners();
 
-      // Send message through WebSocket service
+      // Send message through WebSocket service with userId
       // The service will add the user message and handle the response
-      await _webSocketService.sendMessage(text.trim());
+      await _webSocketService.sendMessage(text.trim(), userId);
     } catch (error) {
       // Add error message
       final errorMessage = ChatMessage(

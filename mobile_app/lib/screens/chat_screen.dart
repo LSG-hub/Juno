@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../services/chat_provider.dart';
 import '../widgets/message_widget.dart';
 import '../widgets/typing_indicator.dart';
+import '../widgets/user_selector_widget.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -15,6 +16,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _textController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final FocusNode _focusNode = FocusNode();
+  String _selectedUserId = '1111111111'; // Default test user
 
   @override
   void initState() {
@@ -36,10 +38,16 @@ class _ChatScreenState extends State<ChatScreen> {
   void _sendMessage() {
     final text = _textController.text.trim();
     if (text.isNotEmpty) {
-      context.read<ChatProvider>().sendMessage(text);
+      context.read<ChatProvider>().sendMessage(text, _selectedUserId);
       _textController.clear();
       _scrollToBottom();
     }
+  }
+
+  void _onUserChanged(String userId) {
+    setState(() {
+      _selectedUserId = userId;
+    });
   }
 
   void _scrollToBottom() {
@@ -83,33 +91,41 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             ),
             const SizedBox(width: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Juno',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Juno',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
-                ),
-                Consumer<ChatProvider>(
-                  builder: (context, chatProvider, child) {
-                    return Text(
-                      chatProvider.isConnected
-                          ? 'AI Financial Assistant'
-                          : chatProvider.isConnecting
-                              ? 'Connecting...'
-                              : 'Offline',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: chatProvider.isConnected
-                            ? theme.colorScheme.primary
-                            : theme.colorScheme.error,
-                      ),
-                    );
-                  },
-                ),
-              ],
+                  Consumer<ChatProvider>(
+                    builder: (context, chatProvider, child) {
+                      return Text(
+                        chatProvider.isConnected
+                            ? 'AI Financial Assistant'
+                            : chatProvider.isConnecting
+                                ? 'Connecting...'
+                                : 'Offline',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: chatProvider.isConnected
+                              ? theme.colorScheme.primary
+                              : theme.colorScheme.error,
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
             ),
+            // User selector widget
+            UserSelectorWidget(
+              selectedUserId: _selectedUserId,
+              onUserChanged: _onUserChanged,
+            ),
+            const SizedBox(width: 8),
           ],
         ),
         actions: [
@@ -249,7 +265,7 @@ class _ChatScreenState extends State<ChatScreen> {
         color: theme.colorScheme.surface,
         boxShadow: [
           BoxShadow(
-            color: theme.shadowColor.withOpacity(0.1),
+            color: theme.shadowColor.withValues(alpha: 0.1),
             blurRadius: 8,
             offset: const Offset(0, -2),
           ),

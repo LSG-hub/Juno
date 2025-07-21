@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:uuid/uuid.dart';
 import '../models/message.dart';
@@ -7,7 +8,7 @@ import '../models/message.dart';
 class WebSocketService {
   // Use environment or fallback to localhost for development
   static String get _baseUrl {
-    const String? host = String.fromEnvironment('COORDINATOR_HOST', defaultValue: 'localhost');
+    const String host = String.fromEnvironment('COORDINATOR_HOST', defaultValue: 'localhost');
     const String port = String.fromEnvironment('COORDINATOR_PORT', defaultValue: '8081');
     return 'ws://$host:$port/ws';
   }
@@ -28,20 +29,20 @@ class WebSocketService {
       _channel!.stream.listen(
         _handleMessage,
         onError: (error) {
-          print('WebSocket error: $error');
+          debugPrint('WebSocket error: $error');
           _isConnected = false;
           _handleDisconnection();
         },
         onDone: () {
-          print('WebSocket connection closed');
+          debugPrint('WebSocket connection closed');
           _isConnected = false;
           _handleDisconnection();
         },
       );
       
-      print('Connected to WebSocket at $_baseUrl');
+      debugPrint('Connected to WebSocket at $_baseUrl');
     } catch (error) {
-      print('Failed to connect to WebSocket: $error');
+      debugPrint('Failed to connect to WebSocket: $error');
       _isConnected = false;
       throw Exception('Failed to connect to Juno backend');
     }
@@ -50,7 +51,7 @@ class WebSocketService {
   void _handleMessage(dynamic data) {
     try {
       final Map<String, dynamic> message = json.decode(data);
-      print('Received WebSocket message: $message');
+      debugPrint('Received WebSocket message: $message');
       
       // Handle MCP JSON-RPC responses
       if (message.containsKey('id') && message.containsKey('result')) {
@@ -85,7 +86,7 @@ class WebSocketService {
         _messageController.add(chatMessage);
       }
     } catch (error) {
-      print('Error parsing WebSocket message: $error');
+      debugPrint('Error parsing WebSocket message: $error');
     }
   }
 
@@ -106,14 +107,14 @@ class WebSocketService {
       try {
         await connect();
       } catch (error) {
-        print('Reconnection failed: $error');
+        debugPrint('Reconnection failed: $error');
         // Try again after delay
         _attemptReconnection();
       }
     }
   }
 
-  Future<String> sendMessage(String message) async {
+  Future<String> sendMessage(String message, String userId) async {
     if (!_isConnected || _channel == null) {
       throw Exception('Not connected to backend');
     }
@@ -127,13 +128,14 @@ class WebSocketService {
     );
     _messageController.add(userMessage);
 
-    // Create MCP JSON-RPC message
+    // Create MCP JSON-RPC message with userId
     final String requestId = _uuid.v4();
     final Map<String, dynamic> mcpMessage = {
       'jsonrpc': '2.0',
       'method': 'process_query',
       'params': {
         'query': message,
+        'userId': userId,
       },
       'id': requestId,
     };
@@ -144,7 +146,7 @@ class WebSocketService {
 
     // Send message
     _channel!.sink.add(json.encode(mcpMessage));
-    print('Sent WebSocket message: $mcpMessage');
+    debugPrint('Sent WebSocket message: $mcpMessage');
 
     try {
       // Wait for response with timeout
@@ -158,7 +160,7 @@ class WebSocketService {
       
       return response['response'] ?? 'No response received';
     } catch (error) {
-      print('Error getting response: $error');
+      debugPrint('Error getting response: $error');
       rethrow;
     }
   }
@@ -190,7 +192,7 @@ class WebSocketService {
       final loginUrl = decoded['login_url'] ?? '';
       final message = decoded['message'] ?? 'Please login to access your financial data.';
       
-      print('Login required. URL: $loginUrl');
+      debugPrint('Login required. URL: $loginUrl');
       
       // Create a special login_required message for the UI
       final loginMessage = ChatMessage(
@@ -205,7 +207,7 @@ class WebSocketService {
       );
       _messageController.add(loginMessage);
     } catch (e) {
-      print('Error parsing login_required response: $e');
+      debugPrint('Error parsing login_required response: $e');
       // Fallback: show the raw response
       final chatMessage = ChatMessage(
         id: _uuid.v4(),

@@ -146,7 +146,7 @@ class MessageWidget extends StatelessWidget {
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
                       valueColor: AlwaysStoppedAnimation<Color>(
-                        _getTextColor(theme, isUser, false).withOpacity(0.6),
+                        _getTextColor(theme, isUser, false).withValues(alpha: 0.6),
                       ),
                     ),
                   ),
@@ -154,7 +154,7 @@ class MessageWidget extends StatelessWidget {
                   Text(
                     'Sending...',
                     style: theme.textTheme.bodySmall?.copyWith(
-                      color: _getTextColor(theme, isUser, false).withOpacity(0.6),
+                      color: _getTextColor(theme, isUser, false).withValues(alpha: 0.6),
                       fontSize: 11,
                     ),
                   ),
@@ -190,7 +190,7 @@ class MessageWidget extends StatelessWidget {
 
   Color _getBubbleColor(ThemeData theme, bool isUser, bool hasError) {
     if (hasError) {
-      return theme.colorScheme.errorContainer.withOpacity(0.3);
+      return theme.colorScheme.errorContainer.withValues(alpha: 0.3);
     }
     if (isUser) {
       return theme.colorScheme.primary;

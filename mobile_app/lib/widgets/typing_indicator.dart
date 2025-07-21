@@ -108,7 +108,7 @@ class _TypingIndicatorState extends State<TypingIndicator>
         width: 8,
         height: 8,
         decoration: BoxDecoration(
-          color: theme.colorScheme.onSurface.withOpacity(0.4 + (opacity * 0.4)),
+          color: theme.colorScheme.onSurface.withValues(alpha: 0.4 + (opacity * 0.4)),
           shape: BoxShape.circle,
         ),
       ),
