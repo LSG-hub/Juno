@@ -1,48 +1,41 @@
-# Juno - Startup Instructions
+# Juno - Complete System Startup Instructions
 
 ## Prerequisites
 
-1. **Flutter** (for mobile app development)
-2. **Go** (for backend MCP servers)
-3. **Docker & Docker Compose** (for running all services)
+1. **Docker & Docker Compose** (for running all services)
+2. **Environment Variables** (ANTHROPIC_API_KEY required)
 
-## Quick Start
+## Single Command Deployment 🚀
 
 ### 1. Environment Setup
 
-A `.env` file has been created in the project root with the necessary environment variables. The file contains:
+Create a `.env` file in the project root with your API key:
 ```bash
 ANTHROPIC_API_KEY=your_anthropic_api_key_here
-# ... other environment variables
 ```
 
-**⚠️ IMPORTANT**: The `.env` file is gitignored and should never be committed to version control.
+**⚠️ IMPORTANT**: Replace `your_anthropic_api_key_here` with your actual Anthropic API key.
 
-### 2. Start Backend Services
+### 2. Start Complete System
 
 ```bash
-# Start all MCP services (automatically loads .env file)
+# Start ALL services including mobile app with one command
 docker-compose up --build
 ```
 
-This will start:
-- `fi-mcp-server` on port 8080
-- `coordinator-mcp` on port 8081 (with Claude API integration)
-- `context-agent-mcp` on port 8082
-- `security-agent-mcp` on port 8083
+This will build and start:
+- `fi-mcp-server` on port 8080 (Financial data)
+- `coordinator-mcp` on port 8081 (Claude API integration)
+- `context-agent-mcp` on port 8082 (User context analysis)
+- `security-agent-mcp` on port 8083 (Security assessment)
+- `mobile-app` on port 3000 (Flutter web interface)
 
-### 2. Run Mobile App
+### 3. Access the Application
 
-```bash
-# Navigate to mobile app directory
-cd mobile_app
+Open your browser and navigate to:
+**http://localhost:3000**
 
-# Get dependencies
-flutter pub get
-
-# Run the app (requires Android/iOS emulator or device)
-flutter run
-```
+The complete Juno AI assistant is now ready to use!
 
 ## Service Endpoints
 

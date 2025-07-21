@@ -5,7 +5,12 @@ import 'package:uuid/uuid.dart';
 import '../models/message.dart';
 
 class WebSocketService {
-  static const String _baseUrl = 'ws://localhost:8081/ws';
+  // Use environment or fallback to localhost for development
+  static String get _baseUrl {
+    const String? host = String.fromEnvironment('COORDINATOR_HOST', defaultValue: 'localhost');
+    const String port = String.fromEnvironment('COORDINATOR_PORT', defaultValue: '8081');
+    return 'ws://$host:$port/ws';
+  }
   WebSocketChannel? _channel;
   final StreamController<ChatMessage> _messageController = StreamController<ChatMessage>.broadcast();
   final Map<String, Completer<Map<String, dynamic>>> _pendingRequests = {};

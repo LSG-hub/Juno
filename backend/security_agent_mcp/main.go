@@ -13,11 +13,12 @@ import (
 )
 
 type SecurityAgent struct {
-	mcpServer *server.Server
+	mcpServer *server.MCPServer
 	fiMCPURL  string
 }
 
 type SecurityAssessment struct {
+	UserID           string                 `json:"user_id"`
 	OverallRisk      string                 `json:"overall_risk"`
 	RiskScore        float64                `json:"risk_score"`
 	EmergencyFund    EmergencyFundStatus    `json:"emergency_fund"`
@@ -71,7 +72,7 @@ func NewSecurityAgent() *SecurityAgent {
 
 func (sa *SecurityAgent) setupMCPServer() {
 	sa.mcpServer = server.NewMCPServer(
-		"Security Agent MCP",
+		"security-agent-mcp",
 		"0.1.0",
 		server.WithInstructions("Juno Security Agent MCP Server - Provides risk assessment and financial security analysis"),
 		server.WithToolCapabilities(true),
@@ -81,44 +82,66 @@ func (sa *SecurityAgent) setupMCPServer() {
 
 	// Add security analysis tools
 	sa.mcpServer.AddTool(
-		mcp.NewTool("assess_financial_security", mcp.WithDescription("Comprehensive financial security assessment")),
+		mcp.NewTool("assess_financial_security",
+			mcp.WithDescription("Comprehensive financial security assessment"),
+			mcp.WithString("user_id",
+				mcp.Description("User ID for security assessment"),
+			),
+		),
 		sa.handleAssessFinancialSecurity,
 	)
 
 	sa.mcpServer.AddTool(
-		mcp.NewTool("analyze_emergency_fund", mcp.WithDescription("Analyze emergency fund adequacy")),
+		mcp.NewTool("analyze_emergency_fund",
+			mcp.WithDescription("Analyze emergency fund adequacy"),
+			mcp.WithString("user_id",
+				mcp.Description("User ID for emergency fund analysis"),
+			),
+		),
 		sa.handleAnalyzeEmergencyFund,
 	)
 
 	sa.mcpServer.AddTool(
-		mcp.NewTool("evaluate_debt_risk", mcp.WithDescription("Evaluate debt and credit risk")),
+		mcp.NewTool("evaluate_debt_risk",
+			mcp.WithDescription("Evaluate debt and credit risk"),
+			mcp.WithString("user_id",
+				mcp.Description("User ID for debt risk evaluation"),
+			),
+		),
 		sa.handleEvaluateDebtRisk,
 	)
 
 	sa.mcpServer.AddTool(
-		mcp.NewTool("check_insurance_gaps", mcp.WithDescription("Identify insurance coverage gaps")),
+		mcp.NewTool("check_insurance_gaps",
+			mcp.WithDescription("Identify insurance coverage gaps"),
+			mcp.WithString("user_id",
+				mcp.Description("User ID for insurance gap analysis"),
+			),
+		),
 		sa.handleCheckInsuranceGaps,
 	)
 
 	sa.mcpServer.AddTool(
-		mcp.NewTool("generate_security_alerts", mcp.WithDescription("Generate security-related alerts and warnings")),
+		mcp.NewTool("generate_security_alerts",
+			mcp.WithDescription("Generate security-related alerts and warnings"),
+			mcp.WithString("user_id",
+				mcp.Description("User ID for security alerts"),
+			),
+		),
 		sa.handleGenerateSecurityAlerts,
 	)
 }
 
 func (sa *SecurityAgent) handleAssessFinancialSecurity(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	params, ok := request.Params.(map[string]interface{})
-	if !ok {
-		return mcp.NewToolResultError("Invalid parameters"), nil
-	}
-
-	userID, ok := params["user_id"].(string)
+	arguments := request.GetArguments()
+	userID, ok := arguments["user_id"].(string)
 	if !ok {
 		userID = "default_user"
 	}
 
-	// For MVP, return mock security assessment
+	// For MVP, return mock security assessment for userID
 	assessment := SecurityAssessment{
+		UserID:      userID,
 		OverallRisk: "low",
 		RiskScore:   2.3, // Scale of 1-10
 		EmergencyFund: EmergencyFundStatus{
@@ -176,10 +199,25 @@ func (sa *SecurityAgent) handleAssessFinancialSecurity(ctx context.Context, requ
 
 	jsonData, err := json.Marshal(assessment)
 	if err != nil {
-		return mcp.NewToolResultError("Failed to marshal security assessment"), nil
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: "Error: Failed to marshal security assessment",
+				},
+			},
+			IsError: true,
+		}, nil
 	}
 
-	return mcp.NewToolResultText(string(jsonData)), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: string(jsonData),
+			},
+		},
+	}, nil
 }
 
 func (sa *SecurityAgent) handleAnalyzeEmergencyFund(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -216,10 +254,25 @@ func (sa *SecurityAgent) handleAnalyzeEmergencyFund(ctx context.Context, request
 
 	jsonData, err := json.Marshal(analysis)
 	if err != nil {
-		return mcp.NewToolResultError("Failed to marshal emergency fund analysis"), nil
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: "Error: Failed to marshal emergency fund analysis",
+				},
+			},
+			IsError: true,
+		}, nil
 	}
 
-	return mcp.NewToolResultText(string(jsonData)), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: string(jsonData),
+			},
+		},
+	}, nil
 }
 
 func (sa *SecurityAgent) handleEvaluateDebtRisk(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -269,10 +322,25 @@ func (sa *SecurityAgent) handleEvaluateDebtRisk(ctx context.Context, request mcp
 
 	jsonData, err := json.Marshal(evaluation)
 	if err != nil {
-		return mcp.NewToolResultError("Failed to marshal debt risk evaluation"), nil
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: "Error: Failed to marshal debt risk evaluation",
+				},
+			},
+			IsError: true,
+		}, nil
 	}
 
-	return mcp.NewToolResultText(string(jsonData)), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: string(jsonData),
+			},
+		},
+	}, nil
 }
 
 func (sa *SecurityAgent) handleCheckInsuranceGaps(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -326,10 +394,25 @@ func (sa *SecurityAgent) handleCheckInsuranceGaps(ctx context.Context, request m
 
 	jsonData, err := json.Marshal(analysis)
 	if err != nil {
-		return mcp.NewToolResultError("Failed to marshal insurance gap analysis"), nil
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: "Error: Failed to marshal insurance gap analysis",
+				},
+			},
+			IsError: true,
+		}, nil
 	}
 
-	return mcp.NewToolResultText(string(jsonData)), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: string(jsonData),
+			},
+		},
+	}, nil
 }
 
 func (sa *SecurityAgent) handleGenerateSecurityAlerts(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -382,10 +465,25 @@ func (sa *SecurityAgent) handleGenerateSecurityAlerts(ctx context.Context, reque
 
 	jsonData, err := json.Marshal(alerts)
 	if err != nil {
-		return mcp.NewToolResultError("Failed to marshal security alerts"), nil
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: "Error: Failed to marshal security alerts",
+				},
+			},
+			IsError: true,
+		}, nil
 	}
 
-	return mcp.NewToolResultText(string(jsonData)), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: string(jsonData),
+			},
+		},
+	}, nil
 }
 
 func (sa *SecurityAgent) healthHandler(w http.ResponseWriter, r *http.Request) {

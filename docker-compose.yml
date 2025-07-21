@@ -79,6 +79,23 @@ services:
       timeout: 10s
       retries: 3
 
+  # Mobile App (Flutter Web)
+  mobile-app:
+    build:
+      context: ./mobile_app
+      dockerfile: Dockerfile
+    ports:
+      - "${MOBILE_APP_PORT:-3000}:80"
+    depends_on:
+      - coordinator-mcp
+    networks:
+      - juno-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
 networks:
   juno-network:
     driver: bridge

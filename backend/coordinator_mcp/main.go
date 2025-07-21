@@ -16,7 +16,7 @@ import (
 )
 
 type CoordinatorServer struct {
-	mcpServer       *server.Server
+	mcpServer       *server.MCPServer
 	anthropicAPIKey string
 	fiMCPURL        string
 	contextAgentURL string
@@ -59,7 +59,7 @@ func NewCoordinatorServer() *CoordinatorServer {
 		securityAgentURL: getEnvWithDefault("SECURITY_AGENT_URL", "http://security-agent-mcp:8083"),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
-				return true // Allow all origins for now
+				return true // Allow all origins for development
 			},
 		},
 	}
@@ -67,7 +67,7 @@ func NewCoordinatorServer() *CoordinatorServer {
 
 func (cs *CoordinatorServer) setupMCPServer() {
 	cs.mcpServer = server.NewMCPServer(
-		"Coordinator MCP",
+		"coordinator-mcp",
 		"0.1.0",
 		server.WithInstructions("Juno Coordinator MCP Server - Orchestrates multi-agent financial AI system"),
 		server.WithToolCapabilities(true),
@@ -77,43 +77,79 @@ func (cs *CoordinatorServer) setupMCPServer() {
 
 	// Add coordination tools
 	cs.mcpServer.AddTool(
-		mcp.NewTool("process_user_query", mcp.WithDescription("Process user financial query through multi-agent system")),
+		mcp.NewTool("process_user_query",
+			mcp.WithDescription("Process user financial query through multi-agent system"),
+			mcp.WithString("query",
+				mcp.Description("User's financial question or request"),
+				mcp.Required(),
+			),
+		),
 		cs.handleProcessQuery,
 	)
 
 	cs.mcpServer.AddTool(
-		mcp.NewTool("get_financial_context", mcp.WithDescription("Get user financial context from agents")),
+		mcp.NewTool("get_financial_context",
+			mcp.WithDescription("Get user financial context from agents"),
+			mcp.WithString("user_id",
+				mcp.Description("User ID for context retrieval"),
+			),
+		),
 		cs.handleGetContext,
 	)
 }
 
 func (cs *CoordinatorServer) handleProcessQuery(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	// Extract query from request
-	params, ok := request.Params.(map[string]interface{})
+	arguments := request.GetArguments()
+	query, ok := arguments["query"].(string)
 	if !ok {
-		return mcp.NewToolResultError("Invalid parameters"), nil
-	}
-
-	query, ok := params["query"].(string)
-	if !ok {
-		return mcp.NewToolResultError("Missing query parameter"), nil
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: "Error: Missing or invalid query parameter",
+				},
+			},
+			IsError: true,
+		}, nil
 	}
 
 	// Call Claude API for intelligent response
 	response, err := cs.callClaudeAPI(query)
 	if err != nil {
 		log.Printf("Error calling Claude API: %v", err)
-		return mcp.NewToolResultText(fmt.Sprintf("I'm having trouble processing your request: %v", err)), nil
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: fmt.Sprintf("I'm having trouble processing your request: %v", err),
+				},
+			},
+			IsError: true,
+		}, nil
 	}
 
-	return mcp.NewToolResultText(response), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: response,
+			},
+		},
+	}, nil
 }
 
 func (cs *CoordinatorServer) handleGetContext(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	// For now, return static context
+	arguments := request.GetArguments()
+	userID, _ := arguments["user_id"].(string)
+	if userID == "" {
+		userID = "default_user"
+	}
+
+	// For MVP, return static context
 	contextData := map[string]interface{}{
-		"user_status": "active",
-		"last_sync":   time.Now().Format(time.RFC3339),
+		"user_id":      userID,
+		"user_status":  "active",
+		"last_sync":    time.Now().Format(time.RFC3339),
 		"agents_available": []string{
 			"fi-mcp-server",
 			"context-agent-mcp",
@@ -123,15 +159,30 @@ func (cs *CoordinatorServer) handleGetContext(ctx context.Context, request mcp.C
 
 	jsonData, err := json.Marshal(contextData)
 	if err != nil {
-		return mcp.NewToolResultError("Failed to marshal context data"), nil
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: "Error: Failed to marshal context data",
+				},
+			},
+			IsError: true,
+		}, nil
 	}
 
-	return mcp.NewToolResultText(string(jsonData)), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: string(jsonData),
+			},
+		},
+	}, nil
 }
 
 func (cs *CoordinatorServer) callClaudeAPI(query string) (string, error) {
 	if cs.anthropicAPIKey == "" {
-		return "Claude API key not configured", fmt.Errorf("ANTHROPIC_API_KEY not set")
+		return "Hello! I'm Juno, your financial AI assistant. I'm currently running in demo mode. How can I help you with your finances today?", nil
 	}
 
 	requestBody := AnthropicRequest{
@@ -140,7 +191,7 @@ func (cs *CoordinatorServer) callClaudeAPI(query string) (string, error) {
 		Messages: []ChatMessage{
 			{
 				Role:    "user",
-				Content: fmt.Sprintf("You are Juno, a financial AI assistant. Please help with this query: %s", query),
+				Content: fmt.Sprintf("You are Juno, a helpful financial AI assistant. Please provide a helpful response to this financial query: %s", query),
 			},
 		},
 	}
@@ -179,7 +230,7 @@ func (cs *CoordinatorServer) callClaudeAPI(query string) (string, error) {
 		return anthropicResp.Content[0].Text, nil
 	}
 
-	return "No response from Claude", nil
+	return "I'm having trouble generating a response right now. Please try again.", nil
 }
 
 func (cs *CoordinatorServer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -247,11 +298,8 @@ func (cs *CoordinatorServer) processWebSocketQuery(msg MCPMessage) MCPMessage {
 	// Process query with Claude API
 	response, err := cs.callClaudeAPI(query)
 	if err != nil {
-		return MCPMessage{
-			JSONRPC: "2.0",
-			ID:      msg.ID,
-			Result:  map[string]string{"response": fmt.Sprintf("Error: %v", err)},
-		}
+		log.Printf("Error calling Claude API: %v", err)
+		response = "I'm having trouble processing your request right now. Please try again."
 	}
 
 	return MCPMessage{
@@ -265,7 +313,7 @@ func (cs *CoordinatorServer) healthHandler(w http.ResponseWriter, r *http.Reques
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{
-		"status": "healthy",
+		"status":  "healthy",
 		"service": "coordinator-mcp",
 		"version": "0.1.0",
 	})

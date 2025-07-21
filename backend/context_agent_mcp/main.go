@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -14,7 +13,7 @@ import (
 )
 
 type ContextAgent struct {
-	mcpServer *server.Server
+	mcpServer *server.MCPServer
 	fiMCPURL  string
 }
 
@@ -35,7 +34,7 @@ func NewContextAgent() *ContextAgent {
 
 func (ca *ContextAgent) setupMCPServer() {
 	ca.mcpServer = server.NewMCPServer(
-		"Context Agent MCP",
+		"context-agent-mcp",
 		"0.1.0",
 		server.WithInstructions("Juno Context Agent MCP Server - Provides user context and environmental awareness for financial decisions"),
 		server.WithToolCapabilities(true),
@@ -45,33 +44,46 @@ func (ca *ContextAgent) setupMCPServer() {
 
 	// Add context analysis tools
 	ca.mcpServer.AddTool(
-		mcp.NewTool("analyze_user_context", mcp.WithDescription("Analyze user's current context for financial decision making")),
+		mcp.NewTool("analyze_user_context",
+			mcp.WithDescription("Analyze user's current context for financial decision making"),
+			mcp.WithString("user_id",
+				mcp.Description("User ID for context analysis"),
+			),
+		),
 		ca.handleAnalyzeContext,
 	)
 
 	ca.mcpServer.AddTool(
-		mcp.NewTool("get_spending_patterns", mcp.WithDescription("Get user's spending patterns and behavioral insights")),
+		mcp.NewTool("get_spending_patterns",
+			mcp.WithDescription("Get user's spending patterns and behavioral insights"),
+			mcp.WithString("user_id",
+				mcp.Description("User ID for spending analysis"),
+			),
+		),
 		ca.handleGetSpendingPatterns,
 	)
 
 	ca.mcpServer.AddTool(
-		mcp.NewTool("detect_life_events", mcp.WithDescription("Detect significant life events from user data patterns")),
+		mcp.NewTool("detect_life_events",
+			mcp.WithDescription("Detect significant life events from user data patterns"),
+			mcp.WithString("user_id",
+				mcp.Description("User ID for life event detection"),
+			),
+		),
 		ca.handleDetectLifeEvents,
 	)
 
 	ca.mcpServer.AddTool(
-		mcp.NewTool("get_temporal_context", mcp.WithDescription("Get time-based context for financial decisions")),
+		mcp.NewTool("get_temporal_context",
+			mcp.WithDescription("Get time-based context for financial decisions"),
+		),
 		ca.handleGetTemporalContext,
 	)
 }
 
 func (ca *ContextAgent) handleAnalyzeContext(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	params, ok := request.Params.(map[string]interface{})
-	if !ok {
-		return mcp.NewToolResultError("Invalid parameters"), nil
-	}
-
-	userID, ok := params["user_id"].(string)
+	arguments := request.GetArguments()
+	userID, ok := arguments["user_id"].(string)
 	if !ok {
 		userID = "default_user"
 	}
@@ -104,10 +116,25 @@ func (ca *ContextAgent) handleAnalyzeContext(ctx context.Context, request mcp.Ca
 
 	jsonData, err := json.Marshal(userContext)
 	if err != nil {
-		return mcp.NewToolResultError("Failed to marshal context data"), nil
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: "Error: Failed to marshal context data",
+				},
+			},
+			IsError: true,
+		}, nil
 	}
 
-	return mcp.NewToolResultText(string(jsonData)), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: string(jsonData),
+			},
+		},
+	}, nil
 }
 
 func (ca *ContextAgent) handleGetSpendingPatterns(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -143,10 +170,25 @@ func (ca *ContextAgent) handleGetSpendingPatterns(ctx context.Context, request m
 
 	jsonData, err := json.Marshal(patterns)
 	if err != nil {
-		return mcp.NewToolResultError("Failed to marshal spending patterns"), nil
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: "Error: Failed to marshal spending patterns",
+				},
+			},
+			IsError: true,
+		}, nil
 	}
 
-	return mcp.NewToolResultText(string(jsonData)), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: string(jsonData),
+			},
+		},
+	}, nil
 }
 
 func (ca *ContextAgent) handleDetectLifeEvents(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -186,10 +228,25 @@ func (ca *ContextAgent) handleDetectLifeEvents(ctx context.Context, request mcp.
 
 	jsonData, err := json.Marshal(lifeEvents)
 	if err != nil {
-		return mcp.NewToolResultError("Failed to marshal life events"), nil
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: "Error: Failed to marshal life events",
+				},
+			},
+			IsError: true,
+		}, nil
 	}
 
-	return mcp.NewToolResultText(string(jsonData)), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: string(jsonData),
+			},
+		},
+	}, nil
 }
 
 func (ca *ContextAgent) handleGetTemporalContext(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -219,10 +276,25 @@ func (ca *ContextAgent) handleGetTemporalContext(ctx context.Context, request mc
 
 	jsonData, err := json.Marshal(temporalContext)
 	if err != nil {
-		return mcp.NewToolResultError("Failed to marshal temporal context"), nil
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: "Error: Failed to marshal temporal context",
+				},
+			},
+			IsError: true,
+		}, nil
 	}
 
-	return mcp.NewToolResultText(string(jsonData)), nil
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			mcp.TextContent{
+				Type: "text",
+				Text: string(jsonData),
+			},
+		},
+	}, nil
 }
 
 func (ca *ContextAgent) healthHandler(w http.ResponseWriter, r *http.Request) {
