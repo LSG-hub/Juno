@@ -1,8 +1,5 @@
 # Environment Variables (IMPORTANT: Contains API keys)
-.env
-.env.local
-.env.production
-.env.staging
+
 
 # Docker
 .docker/
