@@ -3,32 +3,38 @@
 ## COMPLETED TASKS ✅
 
 ### 1. Docker Build Fix
+
 - **Fixed**: Mobile app Dockerfile - removed pubspec.lock from COPY command
 - **File**: `/mobile_app/Dockerfile`
 - **Issue**: pubspec.lock wasn't generated yet during Docker build
 
-### 2. Architecture Simplification  
+### 2. Architecture Simplification
+
 - **Removed**: User selection screen - direct navigation to ChatScreen
 - **Files**: `/mobile_app/lib/main.dart`, `/mobile_app/lib/screens/chat_screen.dart`
 - **Deleted**: `/mobile_app/lib/screens/user_selection_screen.dart`
 
 ### 3. MCP Protocol Implementation
+
 - **Fixed**: Proper MCP tool calling instead of keyword detection
 - **File**: `/backend/coordinator_mcp/main.go`
 - **Change**: Coordinator now calls Claude API with Fi tools exposed, Claude decides when to call Fi
 
 ### 4. Authentication Flow
+
 - **Implemented**: Browser-based Fi authentication
 - **Files**: `/mobile_app/lib/services/websocket_service.dart`, `/mobile_app/lib/widgets/message_widget.dart`
 - **Flow**: Fi returns login_required → Mobile app shows login button → Opens browser
 
 ### 5. Code Cleanup (Recently Completed)
+
 - **Removed**: Unused `callClaudeAPI()` function
 - **Removed**: Unused phone number parameters from all Fi tool definitions
 - **Fixed**: MCP client API usage - `NewStreamableHttpClient` and proper `CallToolRequest` struct
 - **Fixed**: Function signatures to remove phone number parameters throughout
 
 ### 6. Login Required Response Fix
+
 - **Fixed**: login_required responses now bypass Claude processing
 - **File**: `/backend/coordinator_mcp/main.go:431-433`
 - **Change**: When Fi returns login_required JSON, pass it directly to mobile app instead of letting Claude convert to text
@@ -36,6 +42,7 @@
 ## RECENTLY COMPLETED ✅
 
 ### 7. Session Persistence Fix (MAJOR SUCCESS!)
+
 - **FIXED**: User can now login once and stay logged in for subsequent requests
 - **Solution**: Implemented persistent Fi MCP client connection
 - **Files Modified**: `/backend/coordinator_mcp/main.go`
@@ -46,6 +53,7 @@
   4. ✅ Session now maintained across all requests - LOGIN WORKS!
 
 ### 8. Multi-User Support Implementation (PHASE 2 COMPLETE!)
+
 - **SOLVED**: Multiple users can now have separate Fi sessions and data isolation
 - **Solution**: Per-User Fi Client Pool with Thread Safety
 - **Files Modified**: `/backend/coordinator_mcp/main.go`
@@ -62,12 +70,60 @@
 
 ## PENDING TASKS 📋
 
-### PRIORITY 1: Production Optimizations (LOW PRIORITY)
-- **Enhancement**: Add client pool cleanup and resource management
+### PRIORITY 1: Multi-User App Authentication (CRITICAL FOR HACKATHON)
+
+- **Challenge**: Multiple hackathon participants will interfere with each other's Fi sessions
+- **Problem**: Person A logs into Fi user "1111111111", Person B sees Person A's data
+- **Solution**: Firebase Auth to isolate each app user's access to the 16 Fi test datasets
+
+#### Firebase Auth Implementation Plan:
+
+**Goal**: Give each app user their own isolated set of 16 Fi test users
+
+**Phase 1: Firebase Setup & Research** 🔥
+
+- Research Firebase free tier limits (10K monthly active users should be enough)
+- Set up Firebase project with FirebaseUI Auth
+- Configure auth providers: Email, Google, Anonymous (for quick judge testing)
+- Test Firebase integration basics
+
+**Phase 2: Backward-Compatible Coordinator Changes** ⚙️
+
+- Extend WebSocket protocol to accept optional `firebaseUID` parameter
+- Update client pool key generation: `${firebaseUID}_${userId}` vs legacy `${userId}`
+- Ensure existing functionality works without Firebase (fallback mode)
+- Add Firebase user cleanup endpoint for logout
+
+**Phase 3: Flutter Firebase Integration** 📱
+
+- Add Firebase SDK and FirebaseUI Auth to pubspec.yaml
+- Create auth gate/landing page (login/signup/anonymous options)
+- Update WebSocket service to include Firebase UID in messages
+- Preserve existing dropdown and chat functionality
+
+**Phase 4: User Experience & Cleanup** 🧹
+
+- Add logout button with Fi client pool cleanup
+- Add user indicator (email/anonymous) in UI
+- Test complete flow: Firebase login → Fi user selection → Fi auth → Logout
+- Anonymous auth flow for judges/mentors
+
+**Phase 5: Demo Polish** ✨
+
+- Landing page explaining demo and Fi datasets
+- Smooth onboarding for hackathon judges
+- Error handling and loading states
+- Documentation for mentors/judges
+
+### PRIORITY 2: Production Optimizations (LOW PRIORITY)
+
 - **Enhancement**: Add connection health monitoring
+- **Enhancement**: Performance optimizations
 
 #### Multi-User Architecture Plan:
+
 **Implementation Approach: Per-User Fi Client Pool**
+
 ```
 User A ──┐
 User B ──┤── Coordinator ──┤── Fi Connection A (SessionId A, Phone: 1111111111)
@@ -76,12 +132,14 @@ User C ──┘                 ├── Fi Connection B (SessionId B, Phone: 
 ```
 
 #### Changes Required:
+
 1. **Mobile App User Selection**
+
    - Add dropdown with 16 test phone numbers (1010101010 to 9999999999)
    - **IMPORTANT**: Use same UI theme, design, and Material 3 components as existing app
    - Follow existing design patterns from ChatScreen (colors, spacing, typography)
    - Integrate seamlessly with current purple gradient theme and card designs
-   - **Design References**: 
+   - **Design References**:
      * Color scheme: `ColorScheme.fromSeed(seedColor: Color(0xFF6750A4))` (Material Purple)
      * App bar style with gradient avatar and "Juno" branding
      * Input field styling from chat input area with rounded corners
@@ -95,8 +153,8 @@ User C ──┘                 ├── Fi Connection B (SessionId B, Phone: 
      * Placement: AppBar next to Juno title
    - Update WebSocket protocol to include `userId` in messages
    - UI element to select "user" for testing different Fi datasets
-
 2. **Coordinator Client Pool**
+
    ```go
    type CoordinatorServer struct {
        // ... existing fields
@@ -104,33 +162,35 @@ User C ──┘                 ├── Fi Connection B (SessionId B, Phone: 
        clientsMu sync.Mutex                // Thread safety for concurrent users
    }
    ```
-
 3. **Dynamic Client Management**
+
    - `getOrCreateFiClient(userId string)` method
    - Check fiClients map for existing client per user
    - Create new persistent client if not exists
    - Automatic login_required handling per user session
-
 4. **Session Isolation Benefits**
+
    - Each user gets own persistent Fi connection
    - Complete data isolation (no cross-user data leakage)
    - Scalable to hundreds/thousands of concurrent users
    - Maintains performance benefits of persistent connections
-
 5. **Testing Infrastructure**
+
    - Test all 16 Fi phone number datasets independently
    - Verify session isolation between concurrent users
    - Load testing with multiple simultaneous users
 
 #### Implementation Priority: ✅ **ALL PHASES COMPLETE**
+
 - **Phase 1**: Mobile app user selection UI (foundation) ✅ **COMPLETED & TESTED**
 - **Phase 2**: Coordinator client pool implementation ✅ **COMPLETED & TESTED**
 - **Phase 3**: Dynamic client management with thread safety ✅ **COMPLETED & TESTED**
 - **Phase 4**: Testing with all 16 datasets simultaneously ✅ **COMPLETED & TESTED**
 
 #### Multi-User System Status: ✅ **FULLY OPERATIONAL**
+
 - ✅ **Phase 1 - Liquid Glass Dropdown**: Beautiful glassmorphism UI with 16 test users
-- ✅ **Phase 1 - AppBar Integration**: Seamlessly integrated next to Juno branding  
+- ✅ **Phase 1 - AppBar Integration**: Seamlessly integrated next to Juno branding
 - ✅ **Phase 1 - Overlay Positioning**: Fixed visibility issues, renders above AppBar
 - ✅ **Phase 1 - Smooth Animations**: Scale, rotation, and opacity transitions working
 - ✅ **Phase 1 - Click Outside to Close**: Proper UX with gesture detection
@@ -149,12 +209,14 @@ User C ──┘                 ├── Fi Connection B (SessionId B, Phone: 
 ## CURRENT ARCHITECTURE ✅ **UPDATED WITH MULTI-USER SUPPORT**
 
 ### Mobile App Flow
+
 1. App starts → ChatScreen with user dropdown selector
 2. User selects from 16 Fi test users (1010101010, 1111111111, etc.)
 3. ChatProvider initializes → WebSocket connects to coordinator with userId
 4. User message → WebSocket JSON-RPC → Coordinator (includes userId)
 
 ### Coordinator Flow (Per-User)
+
 1. Receives process_query with userId → Gets/Creates Fi client for that user
 2. Calls Claude API with Fi tools available for specific user
 3. Claude detects financial query → Calls fetch_net_worth tool
@@ -163,9 +225,10 @@ User C ──┘                 ├── Fi Connection B (SessionId B, Phone: 
 6. Response flows back to mobile app
 
 ### Authentication Flow (Per-User Session)
+
 1. User selects phone number (e.g., 1111111111) from dropdown
 2. Fi returns login_required JSON with sessionId for that user
-3. Mobile app shows "Login to Fi Money" button  
+3. Mobile app shows "Login to Fi Money" button
 4. Button opens Fi login page → User logs in with selected phone number
 5. **FIXED**: Session persists in user's dedicated Fi client
 6. Switch to different user → New login required for that user
@@ -174,6 +237,7 @@ User C ──┘                 ├── Fi Connection B (SessionId B, Phone: 
 ## FILES MODIFIED
 
 ### Mobile App
+
 - `/mobile_app/Dockerfile` - Fixed pubspec.lock issue
 - `/mobile_app/lib/main.dart` - Direct ChatScreen navigation
 - `/mobile_app/lib/screens/chat_screen.dart` - Removed user parameters
@@ -182,6 +246,7 @@ User C ──┘                 ├── Fi Connection B (SessionId B, Phone: 
 - **DELETED**: `/mobile_app/lib/screens/user_selection_screen.dart`
 
 ### Backend Coordinator
+
 - `/backend/coordinator_mcp/main.go` - **MAJOR MULTI-USER IMPLEMENTATION**:
   - ✅ Added per-user Fi client pool with thread safety
   - ✅ Implemented `getOrCreateFiClient(userId)` method
@@ -192,18 +257,21 @@ User C ──┘                 ├── Fi Connection B (SessionId B, Phone: 
   - ✅ Maintained backward compatibility with fallback defaults
 
 ## ENVIRONMENT
+
 - **Working Directory**: `/Users/sreenivasg/Desktop/Projects/Juno/backend/coordinator_mcp`
 - **Docker**: Use `docker-compose build --no-cache && docker-compose up`
 - **Test Data**: Fi has test phone numbers like 1111111111, any OTP works
 
 ## NEXT SESSION INSTRUCTIONS
+
 1. Read this TODO.txt file first
-2. Read `/Users/sreenivasg/Desktop/Projects/Juno/backend/coordinator_mcp/main.go` 
+2. Read `/Users/sreenivasg/Desktop/Projects/Juno/backend/coordinator_mcp/main.go`
 3. Focus on `callFiMCPTool()` function - this creates new clients each time
 4. Implement persistent Fi MCP client to maintain login sessions
 5. Test the complete login flow end-to-end
 
 ## TESTING COMMANDS
+
 ```bash
 # Rebuild and test
 cd /Users/sreenivasg/Desktop/Projects/Juno
