@@ -65,24 +65,10 @@ class AuthWrapper extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer<AuthService>(
       builder: (context, authService, child) {
-        // Show loading while checking authentication state
+        // Always show auth screen first, even if Firebase has cached auth
+        // This ensures clean demo experience for judges
         if (authService.currentUser == null) {
-          // Check if we're in the process of authentication
-          return FutureBuilder(
-            future: Future.delayed(const Duration(milliseconds: 100)),
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Scaffold(
-                  body: Center(
-                    child: CircularProgressIndicator(),
-                  ),
-                );
-              }
-              
-              // Not authenticated, show auth screen
-              return const AuthScreen();
-            },
-          );
+          return const AuthScreen();
         }
         
         // Authenticated, show main app

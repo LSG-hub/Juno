@@ -84,6 +84,9 @@ services:
     build:
       context: ./mobile_app
       dockerfile: Dockerfile
+      args:
+        - COORDINATOR_HOST=localhost
+        - COORDINATOR_PORT=${COORDINATOR_MCP_PORT:-8091}
     ports:
       - "${MOBILE_APP_PORT:-3000}:80"
     depends_on:

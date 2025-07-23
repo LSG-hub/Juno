@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 class ChatMessage {
   final String id;
   final String text;
@@ -36,6 +38,30 @@ class ChatMessage {
       'metadata': metadata,
     };
   }
+
+  // Firestore-specific serialization
+  Map<String, dynamic> toFirestore() {
+    return {
+      'id': id,
+      'text': text,
+      'isUser': isUser,
+      'timestamp': timestamp,  // Firestore handles DateTime directly
+      'status': status.toString().split('.').last,
+      'metadata': metadata,
+    };
+  }
+
+  // Create from Firestore document
+  ChatMessage.fromFirestore(Map<String, dynamic> data)
+      : id = data['id'] ?? '',
+        text = data['text'] ?? '',
+        isUser = data['isUser'] ?? false,
+        timestamp = (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now(),
+        status = MessageStatus.values.firstWhere(
+          (status) => status.toString() == 'MessageStatus.${data['status']}',
+          orElse: () => MessageStatus.sent,
+        ),
+        metadata = data['metadata'];
 
   ChatMessage copyWith({
     String? id,

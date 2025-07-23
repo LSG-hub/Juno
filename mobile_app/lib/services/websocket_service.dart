@@ -9,7 +9,7 @@ class WebSocketService {
   // Use environment or fallback to localhost for development
   static String get _baseUrl {
     const String host = String.fromEnvironment('COORDINATOR_HOST', defaultValue: 'localhost');
-    const String port = String.fromEnvironment('COORDINATOR_PORT', defaultValue: '8081');
+    const String port = String.fromEnvironment('COORDINATOR_PORT', defaultValue: '8091');
     return 'ws://$host:$port/ws';
   }
   WebSocketChannel? _channel;

@@ -54,6 +54,9 @@ dependencies:
   # Firebase Authentication (let Flutter choose compatible versions)
   firebase_core:
   firebase_auth:
+  
+  # Firestore for chat history storage
+  cloud_firestore:
 
 dev_dependencies:
   flutter_test:

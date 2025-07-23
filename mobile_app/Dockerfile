@@ -36,8 +36,10 @@ RUN flutter pub get
 # Copy the rest of the app
 COPY --chown=developer:developer . .
 
-# Build for web
-RUN flutter build web --release
+# Build for web with environment variables
+ARG COORDINATOR_HOST=localhost
+ARG COORDINATOR_PORT=8091
+RUN flutter build web --release --dart-define=COORDINATOR_HOST=$COORDINATOR_HOST --dart-define=COORDINATOR_PORT=$COORDINATOR_PORT
 
 # Use nginx to serve the built app
 FROM nginx:alpine

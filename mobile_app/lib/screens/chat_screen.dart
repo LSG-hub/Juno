@@ -22,9 +22,19 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
-    // Initialize chat provider
+    // Initialize chat provider and reset for new auth session
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<ChatProvider>().initialize();
+      final chatProvider = context.read<ChatProvider>();
+      final authService = context.read<AuthService>();
+      
+      // Reset chat for clean session
+      chatProvider.resetForNewAuth();
+      chatProvider.initialize();
+      
+      // Initialize with current Firebase user and default Fi user
+      if (authService.firebaseUID != null) {
+        chatProvider.switchToUser(_selectedUserId, authService.firebaseUID!);
+      }
     });
   }
 
@@ -50,7 +60,13 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  void _onUserChanged(String userId) {
+  void _onUserChanged(String userId) async {
+    final authService = context.read<AuthService>();
+    final chatProvider = context.read<ChatProvider>();
+    
+    // Switch to the selected user's chat history
+    await chatProvider.switchToUser(userId, authService.firebaseUID ?? '');
+    
     setState(() {
       _selectedUserId = userId;
     });
@@ -148,7 +164,10 @@ class _ChatScreenState extends State<ChatScreen> {
                 onSelected: (value) async {
                   switch (value) {
                     case 'clear':
-                      chatProvider.clearMessages();
+                      await chatProvider.clearCurrentUserChat();
+                      break;
+                    case 'clear_all':
+                      await chatProvider.clearAllUsersChats();
                       break;
                     case 'reconnect':
                       chatProvider.reconnect();
@@ -156,7 +175,10 @@ class _ChatScreenState extends State<ChatScreen> {
                     case 'logout':
                       // Cleanup Fi clients for this Firebase user
                       if (authService.firebaseUID != null) {
-                        await chatProvider.cleanupUser(authService.firebaseUID!);
+                        await chatProvider.cleanupUser(
+                          authService.firebaseUID!, 
+                          isAnonymous: authService.isAnonymous,
+                        );
                       }
                       // Sign out from Firebase
                       await authService.signOut();
@@ -171,6 +193,16 @@ class _ChatScreenState extends State<ChatScreen> {
                         Icon(Icons.clear_all),
                         SizedBox(width: 8),
                         Text('Clear Chat'),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'clear_all',
+                    child: Row(
+                      children: [
+                        Icon(Icons.delete_sweep),
+                        SizedBox(width: 8),
+                        Text('Clear All Chats'),
                       ],
                     ),
                   ),
