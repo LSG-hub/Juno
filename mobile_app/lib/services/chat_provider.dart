@@ -71,16 +71,16 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> sendMessage(String text, String userId) async {
+  Future<void> sendMessage(String text, String userId, {String? firebaseUID}) async {
     if (text.trim().isEmpty || !_isConnected) return;
 
     try {
       _isTyping = true;
       notifyListeners();
 
-      // Send message through WebSocket service with userId
+      // Send message through WebSocket service with userId and optional firebaseUID
       // The service will add the user message and handle the response
-      await _webSocketService.sendMessage(text.trim(), userId);
+      await _webSocketService.sendMessage(text.trim(), userId, firebaseUID: firebaseUID);
     } catch (error) {
       // Add error message
       final errorMessage = ChatMessage(
@@ -95,6 +95,11 @@ class ChatProvider extends ChangeNotifier {
       _isTyping = false;
       notifyListeners();
     }
+  }
+
+  // Cleanup method for Firebase user logout
+  Future<void> cleanupUser(String firebaseUID) async {
+    await _webSocketService.cleanupUser(firebaseUID);
   }
 
   Future<void> reconnect() async {

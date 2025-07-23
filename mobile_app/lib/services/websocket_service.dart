@@ -114,7 +114,7 @@ class WebSocketService {
     }
   }
 
-  Future<String> sendMessage(String message, String userId) async {
+  Future<String> sendMessage(String message, String userId, {String? firebaseUID}) async {
     if (!_isConnected || _channel == null) {
       throw Exception('Not connected to backend');
     }
@@ -128,15 +128,22 @@ class WebSocketService {
     );
     _messageController.add(userMessage);
 
-    // Create MCP JSON-RPC message with userId
+    // Create MCP JSON-RPC message with userId and optional firebaseUID
     final String requestId = _uuid.v4();
+    final Map<String, dynamic> params = {
+      'query': message,
+      'userId': userId,
+    };
+    
+    // Add firebaseUID if provided (Firebase-enabled mode)
+    if (firebaseUID != null && firebaseUID.isNotEmpty) {
+      params['firebaseUID'] = firebaseUID;
+    }
+    
     final Map<String, dynamic> mcpMessage = {
       'jsonrpc': '2.0',
       'method': 'process_query',
-      'params': {
-        'query': message,
-        'userId': userId,
-      },
+      'params': params,
       'id': requestId,
     };
 
@@ -216,6 +223,30 @@ class WebSocketService {
         timestamp: DateTime.now(),
       );
       _messageController.add(chatMessage);
+    }
+  }
+
+  // Send cleanup request for Firebase user logout
+  Future<void> cleanupUser(String firebaseUID) async {
+    if (!_isConnected || _channel == null) {
+      return;
+    }
+
+    final String requestId = _uuid.v4();
+    final Map<String, dynamic> mcpMessage = {
+      'jsonrpc': '2.0',
+      'method': 'cleanup_user',
+      'params': {
+        'firebaseUID': firebaseUID,
+      },
+      'id': requestId,
+    };
+
+    try {
+      _channel!.sink.add(json.encode(mcpMessage));
+      debugPrint('Sent cleanup request for Firebase user: $firebaseUID');
+    } catch (error) {
+      debugPrint('Error sending cleanup request: $error');
     }
   }
 

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/chat_provider.dart';
+import '../services/auth_service.dart';
 import '../widgets/message_widget.dart';
 import '../widgets/typing_indicator.dart';
 import '../widgets/user_selector_widget.dart';
@@ -38,7 +39,12 @@ class _ChatScreenState extends State<ChatScreen> {
   void _sendMessage() {
     final text = _textController.text.trim();
     if (text.isNotEmpty) {
-      context.read<ChatProvider>().sendMessage(text, _selectedUserId);
+      final authService = context.read<AuthService>();
+      context.read<ChatProvider>().sendMessage(
+        text, 
+        _selectedUserId,
+        firebaseUID: authService.firebaseUID,
+      );
       _textController.clear();
       _scrollToBottom();
     }
@@ -101,19 +107,26 @@ class _ChatScreenState extends State<ChatScreen> {
                       fontWeight: FontWeight.bold,
                     ),
                   ),
-                  Consumer<ChatProvider>(
-                    builder: (context, chatProvider, child) {
+                  Consumer2<ChatProvider, AuthService>(
+                    builder: (context, chatProvider, authService, child) {
+                      String subtitle = '';
+                      Color color = theme.colorScheme.error;
+                      
+                      if (chatProvider.isConnected) {
+                        subtitle = '${authService.displayName} • AI Financial Assistant';
+                        color = theme.colorScheme.primary;
+                      } else if (chatProvider.isConnecting) {
+                        subtitle = 'Connecting...';
+                        color = theme.colorScheme.onSurfaceVariant;
+                      } else {
+                        subtitle = 'Offline';
+                        color = theme.colorScheme.error;
+                      }
+                      
                       return Text(
-                        chatProvider.isConnected
-                            ? 'AI Financial Assistant'
-                            : chatProvider.isConnecting
-                                ? 'Connecting...'
-                                : 'Offline',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: chatProvider.isConnected
-                              ? theme.colorScheme.primary
-                              : theme.colorScheme.error,
-                        ),
+                        subtitle,
+                        style: theme.textTheme.bodySmall?.copyWith(color: color),
+                        overflow: TextOverflow.ellipsis,
                       );
                     },
                   ),
@@ -129,16 +142,24 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
         actions: [
-          Consumer<ChatProvider>(
-            builder: (context, chatProvider, child) {
+          Consumer2<ChatProvider, AuthService>(
+            builder: (context, chatProvider, authService, child) {
               return PopupMenuButton<String>(
-                onSelected: (value) {
+                onSelected: (value) async {
                   switch (value) {
                     case 'clear':
                       chatProvider.clearMessages();
                       break;
                     case 'reconnect':
                       chatProvider.reconnect();
+                      break;
+                    case 'logout':
+                      // Cleanup Fi clients for this Firebase user
+                      if (authService.firebaseUID != null) {
+                        await chatProvider.cleanupUser(authService.firebaseUID!);
+                      }
+                      // Sign out from Firebase
+                      await authService.signOut();
                       break;
                   }
                 },
@@ -164,6 +185,16 @@ class _ChatScreenState extends State<ChatScreen> {
                         ],
                       ),
                     ),
+                  const PopupMenuItem(
+                    value: 'logout',
+                    child: Row(
+                      children: [
+                        Icon(Icons.logout),
+                        SizedBox(width: 8),
+                        Text('Sign Out'),
+                      ],
+                    ),
+                  ),
                 ],
               );
             },

@@ -113,18 +113,37 @@ func (cs *CoordinatorServer) initializeFiClient() {
 	log.Printf("Successfully initialized persistent Fi MCP client")
 }
 
-// getOrCreateFiClient returns or creates a persistent Fi MCP client for the given userId
-func (cs *CoordinatorServer) getOrCreateFiClient(userId string) (*client.Client, error) {
+// getClientKey generates the appropriate client pool key based on Firebase UID and userId
+func (cs *CoordinatorServer) getClientKey(userId string, firebaseUID string) string {
+	if firebaseUID == "" {
+		// Legacy mode - preserve existing functionality
+		return userId
+	}
+	// Firebase mode - isolate by app user
+	return fmt.Sprintf("%s_%s", firebaseUID, userId)
+}
+
+// getOrCreateFiClient returns or creates a persistent Fi MCP client for the given userId and optional firebaseUID
+func (cs *CoordinatorServer) getOrCreateFiClient(userId string, firebaseUID string) (*client.Client, error) {
 	cs.clientsMu.Lock()
 	defer cs.clientsMu.Unlock()
 	
-	// Check if client already exists for this user
-	if existingClient, exists := cs.fiClients[userId]; exists {
+	// Generate appropriate client key (supports both legacy and Firebase modes)
+	clientKey := cs.getClientKey(userId, firebaseUID)
+	
+	// Check if client already exists for this client key
+	if existingClient, exists := cs.fiClients[clientKey]; exists {
 		return existingClient, nil
 	}
 	
-	// Create new Fi MCP client for this user
-	log.Printf("Creating new Fi MCP client for user: %s", userId)
+	// Create new Fi MCP client
+	var logMsg string
+	if firebaseUID != "" {
+		logMsg = fmt.Sprintf("Creating new Fi MCP client for Firebase user %s, Fi user: %s", firebaseUID, userId)
+	} else {
+		logMsg = fmt.Sprintf("Creating new Fi MCP client for user: %s (legacy mode)", userId)
+	}
+	log.Printf(logMsg)
 	fiClient, err := client.NewStreamableHttpClient(cs.fiMCPURL + "/mcp/")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Fi MCP client for user %s: %w", userId, err)
@@ -151,9 +170,13 @@ func (cs *CoordinatorServer) getOrCreateFiClient(userId string) (*client.Client,
 		return nil, fmt.Errorf("failed to initialize Fi MCP client for user %s: %w", userId, err)
 	}
 	
-	// Store the client in our pool
-	cs.fiClients[userId] = fiClient
-	log.Printf("Successfully created and stored Fi MCP client for user: %s", userId)
+	// Store the client in our pool using the appropriate key
+	cs.fiClients[clientKey] = fiClient
+	if firebaseUID != "" {
+		log.Printf("Successfully created and stored Fi MCP client for Firebase user %s, Fi user: %s", firebaseUID, userId)
+	} else {
+		log.Printf("Successfully created and stored Fi MCP client for user: %s (legacy mode)", userId)
+	}
 	
 	return fiClient, nil
 }
@@ -164,13 +187,33 @@ func (cs *CoordinatorServer) cleanupFiClients() {
 	defer cs.clientsMu.Unlock()
 	
 	log.Printf("Cleaning up Fi client pool, current clients: %d", len(cs.fiClients))
-	for userId, client := range cs.fiClients {
+	for clientKey, client := range cs.fiClients {
 		if client != nil {
 			client.Close()
-			log.Printf("Closed Fi client for user: %s", userId)
+			log.Printf("Closed Fi client for key: %s", clientKey)
 		}
 	}
 	cs.fiClients = make(map[string]*client.Client)
+}
+
+// cleanupFirebaseUserClients removes all Fi clients for a specific Firebase user
+func (cs *CoordinatorServer) cleanupFirebaseUserClients(firebaseUID string) {
+	cs.clientsMu.Lock()
+	defer cs.clientsMu.Unlock()
+	
+	var removedClients []string
+	for clientKey, client := range cs.fiClients {
+		// Check if this client belongs to the Firebase user
+		if strings.HasPrefix(clientKey, firebaseUID+"_") {
+			if client != nil {
+				client.Close()
+			}
+			delete(cs.fiClients, clientKey)
+			removedClients = append(removedClients, clientKey)
+		}
+	}
+	
+	log.Printf("Cleaned up %d Fi clients for Firebase user %s: %v", len(removedClients), firebaseUID, removedClients)
 }
 
 func (cs *CoordinatorServer) setupMCPServer() {
@@ -238,8 +281,11 @@ func (cs *CoordinatorServer) handleProcessQuery(ctx context.Context, request mcp
 		userId = "1111111111"
 	}
 
+	// Extract optional firebaseUID for Firebase-enabled clients
+	firebaseUID, _ := arguments["firebaseUID"].(string)
+
 	// Call Claude API with tools for intelligent response
-	response, err := cs.callClaudeAPIWithTools(query, userId)
+	response, err := cs.callClaudeAPIWithTools(query, userId, firebaseUID)
 	if err != nil {
 		log.Printf("Error calling Claude API: %v", err)
 		return &mcp.CallToolResult{
@@ -326,8 +372,11 @@ func (cs *CoordinatorServer) handleFetchFinancialData(ctx context.Context, reque
 		userId = "1111111111"
 	}
 
+	// Extract optional firebaseUID for Firebase-enabled clients
+	firebaseUID, _ := arguments["firebaseUID"].(string)
+
 	// Call Fi MCP server for specific user
-	response, err := cs.callFiMCP(toolName, userId)
+	response, err := cs.callFiMCP(toolName, userId, firebaseUID)
 	if err != nil {
 		log.Printf("Error calling Fi MCP: %v", err)
 		return &mcp.CallToolResult{
@@ -352,9 +401,9 @@ func (cs *CoordinatorServer) handleFetchFinancialData(ctx context.Context, reque
 }
 
 // Fi MCP tool call using per-user persistent client to maintain session
-func (cs *CoordinatorServer) callFiMCPTool(toolName string, userId string) (*mcp.CallToolResult, error) {
-	// Get or create Fi client for this specific user
-	fiClient, err := cs.getOrCreateFiClient(userId)
+func (cs *CoordinatorServer) callFiMCPTool(toolName string, userId string, firebaseUID string) (*mcp.CallToolResult, error) {
+	// Get or create Fi client for this specific user (with Firebase isolation)
+	fiClient, err := cs.getOrCreateFiClient(userId, firebaseUID)
 	if err != nil {
 		// Fallback to legacy single client if user-specific client fails
 		log.Printf("Failed to get Fi client for user %s, falling back to legacy client: %v", userId, err)
@@ -380,9 +429,9 @@ func (cs *CoordinatorServer) callFiMCPTool(toolName string, userId string) (*mcp
 	return result, nil
 }
 
-func (cs *CoordinatorServer) callFiMCP(toolName string, userId string) (string, error) {
+func (cs *CoordinatorServer) callFiMCP(toolName string, userId string, firebaseUID string) (string, error) {
 	// Call Fi tool for specific user (will return login_required if not authenticated)
-	result, err := cs.callFiMCPTool(toolName, userId)
+	result, err := cs.callFiMCPTool(toolName, userId, firebaseUID)
 	if err != nil {
 		return "", err
 	}
@@ -412,7 +461,7 @@ func (cs *CoordinatorServer) callFiMCP(toolName string, userId string) (string, 
 }
 
 // Claude API request with tool calls support
-func (cs *CoordinatorServer) callClaudeAPIWithTools(query string, userId string) (string, error) {
+func (cs *CoordinatorServer) callClaudeAPIWithTools(query string, userId string, firebaseUID string) (string, error) {
 	if cs.anthropicAPIKey == "" {
 		return "Hello! I'm Juno, your financial AI assistant. I'm currently running in demo mode. How can I help you with your finances today?", nil
 	}
@@ -524,10 +573,10 @@ func (cs *CoordinatorServer) callClaudeAPIWithTools(query string, userId string)
 					toolName, _ := contentItem["name"].(string)
 					toolId, _ := contentItem["id"].(string)
 					
-					// Call Fi MCP tool for specific user
-					toolResult, err := cs.callFiMCP(toolName, userId)
+					// Call Fi MCP tool for specific user (with Firebase isolation)
+					toolResult, err := cs.callFiMCP(toolName, userId, firebaseUID)
 					if err != nil {
-						log.Printf("Error calling Fi tool %s for user %s: %v", toolName, userId, err)
+						log.Printf("Error calling Fi tool %s for user %s (Firebase: %s): %v", toolName, userId, firebaseUID, err)
 						toolResult = fmt.Sprintf("Error accessing %s data", toolName)
 					}
 					
@@ -537,7 +586,7 @@ func (cs *CoordinatorServer) callClaudeAPIWithTools(query string, userId string)
 					}
 					
 					// Continue conversation with tool result
-					followUpResponse, err := cs.callClaudeAPIWithToolResult(query, toolName, toolId, toolResult, userId)
+					followUpResponse, err := cs.callClaudeAPIWithToolResult(query, toolName, toolId, toolResult, userId, firebaseUID)
 					if err != nil {
 						log.Printf("Error in follow-up call: %v", err)
 						finalResponse.WriteString(fmt.Sprintf("\nI retrieved your %s data but had trouble processing it.", toolName))
@@ -558,8 +607,8 @@ func (cs *CoordinatorServer) callClaudeAPIWithTools(query string, userId string)
 }
 
 // Follow-up call to Claude with tool result
-func (cs *CoordinatorServer) callClaudeAPIWithToolResult(originalQuery, toolName, toolId, toolResult, userId string) (string, error) {
-	log.Printf("Making follow-up Claude API call for user %s with tool result from %s", userId, toolName)
+func (cs *CoordinatorServer) callClaudeAPIWithToolResult(originalQuery, toolName, toolId, toolResult, userId, firebaseUID string) (string, error) {
+	log.Printf("Making follow-up Claude API call for user %s (Firebase: %s) with tool result from %s", userId, firebaseUID, toolName)
 	requestBody := map[string]any{
 		"model":      "claude-3-5-sonnet-20241022", 
 		"max_tokens": 1000,
@@ -669,6 +718,12 @@ connectionLoop:
 				log.Printf("WebSocket write error: %v", err)
 				break connectionLoop
 			}
+		case "cleanup_user":
+			response := cs.processWebSocketCleanup(msg)
+			if err := conn.WriteJSON(response); err != nil {
+				log.Printf("WebSocket write error: %v", err)
+				break connectionLoop
+			}
 		default:
 			// Echo back unknown methods
 			response := MCPMessage{
@@ -709,13 +764,20 @@ func (cs *CoordinatorServer) processWebSocketQuery(msg MCPMessage) MCPMessage {
 		// Fallback to default user if no userId provided (backward compatibility)
 		userId = "1111111111"
 		log.Printf("No userId provided, defaulting to: %s", userId)
+	}
+
+	// Extract optional firebaseUID from parameters (sent by Firebase-enabled mobile app)
+	firebaseUID, _ := params["firebaseUID"].(string)
+	
+	if firebaseUID != "" {
+		log.Printf("Processing query for Firebase user %s, Fi user: %s", firebaseUID, userId)
 	} else {
-		log.Printf("Processing query for user: %s", userId)
+		log.Printf("Processing query for user: %s (legacy mode)", userId)
 	}
 
 	// Process query with Claude API + Fi tools available for specific user
 	// Each user will have their own Fi client and authentication session
-	response, err := cs.callClaudeAPIWithTools(query, userId)
+	response, err := cs.callClaudeAPIWithTools(query, userId, firebaseUID)
 	if err != nil {
 		log.Printf("Error calling Claude API with tools for user %s: %v", userId, err)
 		response = "I'm having trouble processing your request right now. Please try again."
@@ -725,6 +787,35 @@ func (cs *CoordinatorServer) processWebSocketQuery(msg MCPMessage) MCPMessage {
 		JSONRPC: "2.0",
 		ID:      msg.ID,
 		Result:  map[string]string{"response": response},
+	}
+}
+
+func (cs *CoordinatorServer) processWebSocketCleanup(msg MCPMessage) MCPMessage {
+	params, ok := msg.Params.(map[string]any)
+	if !ok {
+		return MCPMessage{
+			JSONRPC: "2.0",
+			ID:      msg.ID,
+			Error:   map[string]string{"message": "Invalid parameters"},
+		}
+	}
+
+	firebaseUID, ok := params["firebaseUID"].(string)
+	if !ok || firebaseUID == "" {
+		return MCPMessage{
+			JSONRPC: "2.0",
+			ID:      msg.ID,
+			Error:   map[string]string{"message": "Missing firebaseUID parameter"},
+		}
+	}
+
+	// Clean up all Fi clients for this Firebase user
+	cs.cleanupFirebaseUserClients(firebaseUID)
+
+	return MCPMessage{
+		JSONRPC: "2.0",
+		ID:      msg.ID,
+		Result:  map[string]string{"status": "cleanup_completed"},
 	}
 }
 

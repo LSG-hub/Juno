@@ -1,9 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'screens/chat_screen.dart';
+import 'screens/auth_screen.dart';
 import 'services/chat_provider.dart';
+import 'services/auth_service.dart';
+import 'firebase_options.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Initialize Firebase
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+  
   runApp(const JunoApp());
 }
 
@@ -12,8 +23,11 @@ class JunoApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (context) => ChatProvider(),
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (context) => AuthService()),
+        ChangeNotifierProvider(create: (context) => ChatProvider()),
+      ],
       child: MaterialApp(
         title: 'Juno - AI Financial Assistant',
         debugShowCheckedModeBanner: false,
@@ -38,8 +52,42 @@ class JunoApp extends StatelessWidget {
           ),
         ),
         themeMode: ThemeMode.system,
-        home: const ChatScreen(),
+        home: const AuthWrapper(),
       ),
+    );
+  }
+}
+
+class AuthWrapper extends StatelessWidget {
+  const AuthWrapper({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<AuthService>(
+      builder: (context, authService, child) {
+        // Show loading while checking authentication state
+        if (authService.currentUser == null) {
+          // Check if we're in the process of authentication
+          return FutureBuilder(
+            future: Future.delayed(const Duration(milliseconds: 100)),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Scaffold(
+                  body: Center(
+                    child: CircularProgressIndicator(),
+                  ),
+                );
+              }
+              
+              // Not authenticated, show auth screen
+              return const AuthScreen();
+            },
+          );
+        }
+        
+        // Authenticated, show main app
+        return const ChatScreen();
+      },
     );
   }
 }
