@@ -121,7 +121,164 @@
 - ✅ **Anonymous auth flow**: Working perfectly for judges/mentors with "Quick Demo Access"
 - ✅ **Firebase web compilation issue RESOLVED** by upgrading firebase_auth_web from 5.8.13 to 5.15.3
 
-## CURRENT PRIORITY: **Phase 5: Demo Polish** ✨
+## CURRENT PRIORITY: **Phase 4.5: Per-User Chat History** 🔄 (CRITICAL UX FIX)
+
+**Goal**: Implement separate chat histories for each Fi test user to improve demo experience
+
+### **Problem**: 
+When switching between Fi test users (1010101010, 1111111111, etc.) in dropdown, chat history persists, making it confusing to track which responses came from which user's data.
+
+### **Solution**: 
+Per-user chat persistence with Firestore storage and two-level clear options
+
+### **Implementation Tasks**:
+- **Firestore Integration**: Add `cloud_firestore` dependency to pubspec.yaml
+- **ChatProvider Enhancement**: Replace in-memory storage with Firestore per-user chat storage
+- **User Switching Logic**: Save current user's chat to Firestore, load selected user's chat history
+- **Two-Level Clear Options**:
+  - "Clear Chat" → Clears only current Fi user's chat from Firestore
+  - "Clear All Chats" → Clears chat history for ALL 16 Fi users from Firestore
+- **Welcome Message Logic**: Add welcome message only for first-time user selection
+- **UI Integration**: Update `_onUserChanged()` method to switch chat contexts with Firestore
+- **PopupMenu Enhancement**: Add "Clear All Chats" option with `Icons.delete_sweep`
+
+### **Benefits**:
+- ✅ Each Fi user maintains separate conversation context across sessions
+- ✅ Judges can switch between users and continue previous conversations  
+- ✅ "Clear All Chats" gives fresh start for next judge
+- ✅ Better demo experience and testing workflow
+- ✅ **RAG-ready**: Persistent storage for future context analysis
+
+## NEXT PRIORITY: **Phase 5: Google Ecosystem Migration** 🚀 (HACKATHON STRATEGY)
+
+**Goal**: Switch to full Google AI stack for maximum hackathon scoring with Google judges
+
+### **Strategic Advantage**:
+- 🏆 **Google ecosystem bonus points** for Google-hosted hackathon
+- 🚀 **Latest Google AI technology** showcase
+- 🔥 **Unified tech stack** - All Google services
+- 💡 **Innovation demonstration** - Cutting-edge Google AI integration
+
+### **Implementation Tasks**:
+
+#### **5.1: Switch from Claude to Gemini 2.5 Flash Lite**
+- **Update coordinator MCP**: Replace Anthropic API calls with Gemini API
+- **Change API endpoint**: `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent`
+- **Update request format**: Convert Claude API format to Gemini API format
+- **Tool calling migration**: Adapt MCP tool calling to Gemini function calling
+- **Environment variable**: Switch from `ANTHROPIC_API_KEY` to `GEMINI_API_KEY`
+
+#### **5.2: Implement Gemini Embeddings for RAG**
+- **Add embedding service**: Create `GeminiEmbeddingService` in Flutter app
+- **Use latest model**: `text-embedding-005` (verify latest available)
+- **Embedding types**: 
+  - `RETRIEVAL_DOCUMENT` for storing chat messages
+  - `RETRIEVAL_QUERY` for RAG search queries
+- **Firestore integration**: Store embeddings with chat messages for future RAG
+
+#### **5.3: Complete Google Stack Integration**
+- ✅ **Firebase Auth** - Already implemented
+- ✅ **Firestore** - Chat storage with embeddings
+- 🆕 **Gemini 2.5 Flash Lite** - Main conversational AI
+- 🆕 **Gemini Embeddings** - RAG and semantic search
+- 🆕 **Google Cloud Functions** - Backend processing (if needed)
+
+### **Technical Specifications**:
+```go
+// Gemini API integration
+GEMINI_API_KEY=your-gemini-key
+Model: gemini-2.5-flash-lite
+Embedding: text-embedding-005
+Dimensions: 768 (verify latest)
+```
+
+### **Benefits**:
+- ✅ **Fast responses** - Gemini 2.5 Flash Lite optimized for speed
+- ✅ **Cost effective** - Great price/performance ratio  
+- ✅ **Future-ready** - RAG capabilities with embeddings
+- ✅ **Hackathon advantage** - Full Google AI showcase
+
+## LATER: **Phase 6: Voice Assistant Integration** 🎙️ (PREMIUM FEATURE)
+
+**Goal**: Add multi-modal voice capabilities to create a truly conversational AI financial assistant
+
+### **Strategic Advantage**:
+- 🎯 **Hackathon differentiator** - Most teams won't have voice integration
+- 🌍 **Multi-language support** - Global accessibility 
+- 🚀 **Premium UX** - Voice-first financial AI experience
+- 🏆 **Google stack showcase** - Full GCP AI services demonstration
+
+### **Required GCP Services** (for teammate to enable):
+```bash
+# Core Voice APIs
+- Speech-to-Text API (speech.googleapis.com)
+- Text-to-Speech API (texttospeech.googleapis.com)  
+- Cloud Translation API (translate.googleapis.com)
+- Generative Language API (generativelanguage.googleapis.com) # Already planned
+
+# Supporting APIs  
+- Cloud Functions API (cloudfunctions.googleapis.com)
+- Cloud Storage API (storage.googleapis.com)
+- Vertex AI API (aiplatform.googleapis.com)
+```
+
+### **Implementation Tasks**:
+
+#### **6.1: Flutter Voice Input**
+- **Add speech recognition**: Integrate Speech-to-Text API in Flutter
+- **Voice button UI**: Add microphone button to chat input area
+- **Audio recording**: Implement audio capture and streaming
+- **Real-time transcription**: Show live speech-to-text conversion
+- **Voice activity detection**: Auto-start/stop recording
+
+#### **6.2: Voice Output Integration**  
+- **Text-to-Speech service**: Convert Gemini responses to speech
+- **Voice selection**: Multiple voice options (male/female, different accents)
+- **Audio streaming**: Real-time audio playback
+- **Speech controls**: Play/pause/speed controls
+- **Background playback**: Continue audio while using other features
+
+#### **6.3: Multi-Language Support**
+- **Language detection**: Auto-detect user's language
+- **Translation integration**: Cloud Translation API for multi-language queries
+- **Localized responses**: Gemini responses in user's preferred language
+- **Voice localization**: Native TTS voices for different languages
+- **Supported languages**: English, Spanish, Hindi, Mandarin, French (expandable)
+
+#### **6.4: Voice-Optimized UX**
+- **Conversational flow**: Voice-first interaction patterns
+- **Audio feedback**: Sound effects for voice actions
+- **Visual voice indicators**: Waveform visualization during recording
+- **Voice shortcuts**: "Hey Juno" wake word using Picovoice Porcupine (FREE)
+- **Hands-free mode**: Complete voice-only operation with wake word activation
+- **Wake word integration**: 
+  - Create custom "Hey Juno" wake word via Picovoice Console (free)
+  - Integrate `porcupine_flutter` plugin for offline detection
+  - Auto-start voice input when wake word detected
+  - Background listening with minimal battery impact
+
+### **Technical Architecture**:
+```
+Wake Word Detection ("Hey Juno") → Voice Input → Speech-to-Text → 
+Translation (if needed) → Gemini → Translation (if needed) → 
+Text-to-Speech → Voice Output
+```
+
+### **Free Services Stack**:
+- **Wake Word**: Picovoice Porcupine (FREE tier)
+- **Speech-to-Text**: GCP Speech-to-Text API ($300 credits)
+- **AI Processing**: Gemini 2.5 Flash Lite ($300 credits)
+- **Text-to-Speech**: GCP Text-to-Speech API ($300 credits)
+- **Translation**: GCP Translation API ($300 credits)
+
+### **Benefits**:
+- ✅ **Accessibility** - Voice-first financial assistance
+- ✅ **Multi-language** - Global user support
+- ✅ **Premium UX** - Conversational AI experience  
+- ✅ **Hackathon edge** - Advanced multi-modal AI demonstration
+- ✅ **Google showcase** - Full GCP AI stack utilization
+
+## LATER: **Phase 7: Demo Polish** ✨
 
 **Goal**: Perfect the hackathon demonstration experience
 
