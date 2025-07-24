@@ -6,12 +6,19 @@ import 'package:uuid/uuid.dart';
 import '../models/message.dart';
 
 class WebSocketService {
-  // Use environment or fallback to localhost for development
+  // Get coordinator URL from build-time environment variables
   static String get _baseUrl {
     const String host = String.fromEnvironment('COORDINATOR_HOST', defaultValue: 'localhost');
     const String port = String.fromEnvironment('COORDINATOR_PORT', defaultValue: '8091');
-    return 'ws://$host:$port/ws';
+    const bool useHttps = bool.fromEnvironment('USE_HTTPS', defaultValue: false);
+    
+    // Use wss:// for HTTPS hosts, ws:// for localhost
+    final protocol = useHttps || !host.contains('localhost') ? 'wss' : 'ws';
+    final portString = (useHttps && port == '443') || (!useHttps && port == '80') ? '' : ':$port';
+    
+    return '$protocol://$host$portString/ws';
   }
+  
   WebSocketChannel? _channel;
   final StreamController<ChatMessage> _messageController = StreamController<ChatMessage>.broadcast();
   final Map<String, Completer<Map<String, dynamic>>> _pendingRequests = {};
