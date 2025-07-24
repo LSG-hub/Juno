@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/message.dart';
@@ -16,6 +17,9 @@ class ChatProvider extends ChangeNotifier {
   // Per-user chat management
   String? _currentUserId;
   String? _firebaseUID;
+  
+  // Stream subscription management to prevent duplicates
+  StreamSubscription<ChatMessage>? _messageSubscription;
 
   List<ChatMessage> get messages => List.unmodifiable(_messages);
   bool get isConnecting => _isConnecting;
@@ -37,12 +41,15 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
+      // Cancel any existing message subscription to prevent duplicates
+      await _messageSubscription?.cancel();
+      
       await _webSocketService.connect();
       _isConnected = true;
       _connectionError = null;
       
-      // Listen to incoming messages
-      _webSocketService.messageStream.listen(
+      // Listen to incoming messages with single subscription
+      _messageSubscription = _webSocketService.messageStream.listen(
         (message) {
           _addMessage(message);
         },
@@ -190,8 +197,16 @@ class ChatProvider extends ChangeNotifier {
       _isTyping = true;
       notifyListeners();
 
+      // Add user message to chat immediately
+      final userMessage = ChatMessage(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        text: text.trim(),
+        isUser: true,
+        timestamp: DateTime.now(),
+      );
+      _addMessage(userMessage);
+
       // Send message through WebSocket service with userId and optional firebaseUID
-      // The service will add the user message and handle the response
       await _webSocketService.sendMessage(text.trim(), userId, firebaseUID: firebaseUID);
     } catch (error) {
       // Add error message
@@ -345,6 +360,7 @@ class ChatProvider extends ChangeNotifier {
 
   @override
   void dispose() {
+    _messageSubscription?.cancel();
     _webSocketService.dispose();
     super.dispose();
   }

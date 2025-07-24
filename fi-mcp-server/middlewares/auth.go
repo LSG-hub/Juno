@@ -53,7 +53,12 @@ func (m *AuthMiddleware) AuthMiddleware(next server.ToolHandlerFunc) server.Tool
 
 // GetLoginUrl fetches dynamic login url for given sessionId
 func (m *AuthMiddleware) getLoginUrl(sessionId string) string {
-	return fmt.Sprintf("http://localhost:%s/mockWebPage?sessionId=%s", pkg.GetPort(), sessionId)
+	// Use external port (8090) for login URL that mobile app can access
+	externalPort := os.Getenv("FI_MCP_EXTERNAL_PORT")
+	if externalPort == "" {
+		externalPort = "8090" // Default external port
+	}
+	return fmt.Sprintf("http://localhost:%s/mockWebPage?sessionId=%s", externalPort, sessionId)
 }
 
 func (m *AuthMiddleware) AddSession(sessionId, phoneNumber string) {

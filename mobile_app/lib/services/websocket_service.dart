@@ -56,12 +56,8 @@ class WebSocketService {
       // Handle MCP JSON-RPC responses
       if (message.containsKey('id') && message.containsKey('result')) {
         final String id = message['id'];
-        if (_pendingRequests.containsKey(id)) {
-          _pendingRequests[id]!.complete(message['result']);
-          _pendingRequests.remove(id);
-        }
         
-        // Also send to UI if it's a chat response
+        // Send to UI if it's a chat response
         if (message['result'] is Map && message['result']['response'] != null) {
           final responseText = message['result']['response'];
           
@@ -77,6 +73,12 @@ class WebSocketService {
             );
             _messageController.add(chatMessage);
           }
+        }
+        
+        // Complete the pending request (for any code that might await sendMessage)
+        if (_pendingRequests.containsKey(id)) {
+          _pendingRequests[id]!.complete(message['result']);
+          _pendingRequests.remove(id);
         }
       }
       
@@ -119,14 +121,8 @@ class WebSocketService {
       throw Exception('Not connected to backend');
     }
 
-    // Add user message to stream immediately
-    final userMessage = ChatMessage(
-      id: _uuid.v4(),
-      text: message,
-      isUser: true,
-      timestamp: DateTime.now(),
-    );
-    _messageController.add(userMessage);
+    // Don't add user message to stream here - let ChatProvider handle it
+    // to avoid duplicates and ensure proper Firestore persistence
 
     // Create MCP JSON-RPC message with userId and optional firebaseUID
     final String requestId = _uuid.v4();

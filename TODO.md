@@ -174,9 +174,38 @@ Per-user chat persistence with Firestore storage, two-level clear options, and *
 - ✅ Perfect hackathon demo experience with clean database hygiene
 - ✅ **RAG-ready**: Persistent storage for future context analysis
 
-## NEXT PRIORITY: **Phase 5: Google Ecosystem Migration** 🚀 (HACKATHON STRATEGY)
+## ✅ COMPLETED: **Phase 5.1: Google Ecosystem Migration** ✅ (HACKATHON STRATEGY)
 
 **Goal**: Switch to full Google AI stack for maximum hackathon scoring with Google judges
+
+### **Migration Tasks COMPLETED**:
+- ✅ **Gemini 2.5 Flash Lite Integration**: Replaced Claude API with Gemini in coordinator
+- ✅ **Environment Variables**: Switched from `ANTHROPIC_API_KEY` to `GEMINI_API_KEY`
+- ✅ **Request/Response Format**: Converted Claude format to Gemini API format
+- ✅ **Function Calling**: Migrated Claude tools to Gemini function declarations
+- ✅ **API Endpoints**: Updated to Google Generative Language API
+- ✅ **Critical Bug Fixes**: 
+  - Fixed Fi login URL port issue (internal 8080 → external 8090)
+  - Fixed duplicate message display bug (multiple stream subscriptions)
+  - Fixed Fi MCP connection issues
+
+### **Technical Implementation**:
+- ✅ **API URL**: `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent`
+- ✅ **Model**: `gemini-2.5-flash-lite` (optimized for speed and cost-effectiveness)
+- ✅ **Function Calling**: All Fi tools converted to Gemini function declarations
+- ✅ **Request Format**: Claude messages → Gemini contents with parts structure
+- ✅ **Response Parsing**: Claude content → Gemini candidates with parts handling
+- ✅ **Environment Configuration**: Docker and .env files updated for Gemini integration
+
+### **Benefits ACHIEVED**:
+- ✅ **Google Ecosystem Bonus**: Maximum hackathon points with Google judges
+- ✅ **Performance**: Faster responses with Flash Lite optimization
+- ✅ **Cost Efficiency**: Better price/performance ratio
+- ✅ **Unified Stack**: Complete Google AI integration (Firebase + Firestore + Gemini)
+
+## NEXT PRIORITY: **Phase 5.2: Microservices Deployment Architecture** 🏗️ (SCALABILITY)
+
+**Goal**: Migrate from Docker monolith to separate Firebase-hosted microservices for better development workflow and scalability
 
 ### **Strategic Advantage**:
 - 🏆 **Google ecosystem bonus points** for Google-hosted hackathon
@@ -186,12 +215,13 @@ Per-user chat persistence with Firestore storage, two-level clear options, and *
 
 ### **Implementation Tasks**:
 
-#### **5.1: Switch from Claude to Gemini 2.5 Flash Lite**
-- **Update coordinator MCP**: Replace Anthropic API calls with Gemini API
-- **Change API endpoint**: `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent`
-- **Update request format**: Convert Claude API format to Gemini API format
-- **Tool calling migration**: Adapt MCP tool calling to Gemini function calling
-- **Environment variable**: Switch from `ANTHROPIC_API_KEY` to `GEMINI_API_KEY`
+#### **5.1: Switch from Claude to Gemini 2.5 Flash Lite** ✅ **COMPLETED**
+- ✅ **Update coordinator MCP**: Replace Anthropic API calls with Gemini API
+- ✅ **Change API endpoint**: `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent`
+- ✅ **Update request format**: Convert Claude API format to Gemini API format
+- ✅ **Tool calling migration**: Adapt MCP tool calling to Gemini function calling
+- ✅ **Environment variable**: Switch from `ANTHROPIC_API_KEY` to `GEMINI_API_KEY`
+- ✅ **Critical Bug Fixes**: Fixed Fi login URL port issue and duplicate message display bug
 
 #### **5.2: Implement Gemini Embeddings for RAG**
 - **Add embedding service**: Create `GeminiEmbeddingService` in Flutter app
@@ -431,8 +461,8 @@ User C ──┘                 ├── Fi Connection B (SessionId B, Phone: 
 ### Coordinator Flow (Per-User)
 
 1. Receives process_query with userId → Gets/Creates Fi client for that user
-2. Calls Claude API with Fi tools available for specific user
-3. Claude detects financial query → Calls fetch_net_worth tool
+2. Calls Gemini 2.5 Flash Lite API with Fi tools available for specific user
+3. Gemini detects financial query → Calls fetch_net_worth tool
 4. Coordinator calls Fi MCP using user's dedicated client
 5. Fi returns login_required (first time) OR user's financial data
 6. Response flows back to mobile app

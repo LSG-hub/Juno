@@ -8,6 +8,7 @@ services:
       - "${FI_MCP_PORT:-8080}:8080"
     environment:
       - PORT=8080
+      - FI_MCP_EXTERNAL_PORT=${FI_MCP_PORT:-8090}
     networks:
       - juno-network
     healthcheck:
@@ -28,7 +29,7 @@ services:
       - FI_MCP_URL=${FI_MCP_URL:-http://fi-mcp-server:8080}
       - CONTEXT_AGENT_URL=${CONTEXT_AGENT_URL:-http://context-agent-mcp:8082}
       - SECURITY_AGENT_URL=${SECURITY_AGENT_URL:-http://security-agent-mcp:8083}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
     depends_on:
       - fi-mcp-server
     networks:

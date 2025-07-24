@@ -20,7 +20,7 @@ import (
 
 type CoordinatorServer struct {
 	mcpServer        *server.MCPServer
-	anthropicAPIKey  string
+	geminiAPIKey     string
 	fiMCPURL         string
 	contextAgentURL  string
 	securityAgentURL string
@@ -35,17 +35,42 @@ type ChatMessage struct {
 	Content string `json:"content"`
 }
 
-type AnthropicRequest struct {
-	Model     string        `json:"model"`
-	MaxTokens int           `json:"max_tokens"`
-	Messages  []ChatMessage `json:"messages"`
+type GeminiRequest struct {
+	Contents []GeminiContent `json:"contents"`
+	Tools    []GeminiTool    `json:"tools,omitempty"`
 }
 
-type AnthropicResponse struct {
-	Content []struct {
-		Text string `json:"text"`
-		Type string `json:"type"`
-	} `json:"content"`
+type GeminiContent struct {
+	Role  string        `json:"role"`
+	Parts []GeminiPart  `json:"parts"`
+}
+
+type GeminiPart struct {
+	Text         string                 `json:"text,omitempty"`
+	FunctionCall *GeminiFunctionCall    `json:"functionCall,omitempty"`
+}
+
+type GeminiFunctionCall struct {
+	Name string                 `json:"name"`
+	Args map[string]interface{} `json:"args"`
+}
+
+type GeminiTool struct {
+	FunctionDeclarations []GeminiFunction `json:"functionDeclarations"`
+}
+
+type GeminiFunction struct {
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	Parameters  interface{} `json:"parameters"`
+}
+
+type GeminiResponse struct {
+	Candidates []GeminiCandidate `json:"candidates"`
+}
+
+type GeminiCandidate struct {
+	Content GeminiContent `json:"content"`
 }
 
 type MCPMessage struct {
@@ -59,7 +84,7 @@ type MCPMessage struct {
 
 func NewCoordinatorServer() *CoordinatorServer {
 	cs := &CoordinatorServer{
-		anthropicAPIKey:  os.Getenv("ANTHROPIC_API_KEY"),
+		geminiAPIKey:     os.Getenv("GEMINI_API_KEY"),
 		fiMCPURL:        getEnvWithDefault("FI_MCP_URL", "http://fi-mcp-server:8080"),
 		contextAgentURL:  getEnvWithDefault("CONTEXT_AGENT_URL", "http://context-agent-mcp:8082"),
 		securityAgentURL: getEnvWithDefault("SECURITY_AGENT_URL", "http://security-agent-mcp:8083"),
@@ -284,10 +309,10 @@ func (cs *CoordinatorServer) handleProcessQuery(ctx context.Context, request mcp
 	// Extract optional firebaseUID for Firebase-enabled clients
 	firebaseUID, _ := arguments["firebaseUID"].(string)
 
-	// Call Claude API with tools for intelligent response
-	response, err := cs.callClaudeAPIWithTools(query, userId, firebaseUID)
+	// Call Gemini API with tools for intelligent response
+	response, err := cs.callGeminiAPIWithTools(query, userId, firebaseUID)
 	if err != nil {
-		log.Printf("Error calling Claude API: %v", err)
+		log.Printf("Error calling Gemini API: %v", err)
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				mcp.TextContent{
@@ -460,71 +485,72 @@ func (cs *CoordinatorServer) callFiMCP(toolName string, userId string, firebaseU
 	return resultText, nil
 }
 
-// Claude API request with tool calls support
-func (cs *CoordinatorServer) callClaudeAPIWithTools(query string, userId string, firebaseUID string) (string, error) {
-	if cs.anthropicAPIKey == "" {
+// Gemini API request with function calls support
+func (cs *CoordinatorServer) callGeminiAPIWithTools(query string, userId string, firebaseUID string) (string, error) {
+	if cs.geminiAPIKey == "" {
 		return "Hello! I'm Juno, your financial AI assistant. I'm currently running in demo mode. How can I help you with your finances today?", nil
 	}
 
-	// Define Fi tools available to Claude
-	tools := []map[string]any{
+	// Define Fi tools available to Gemini
+	tools := []GeminiTool{
 		{
-			"name": "fetch_net_worth",
-			"description": "Fetch user's comprehensive net worth including assets, liabilities, and total wealth",
-			"input_schema": map[string]any{
-				"type": "object",
-				"properties": map[string]any{},
-				"required": []string{},
-			},
-		},
-		{
-			"name": "fetch_bank_transactions",
-			"description": "Fetch user's bank transaction history and account details",
-			"input_schema": map[string]any{
-				"type": "object",
-				"properties": map[string]any{},
-				"required": []string{},
-			},
-		},
-		{
-			"name": "fetch_mf_transactions",
-			"description": "Fetch user's mutual fund transactions and investment details",
-			"input_schema": map[string]any{
-				"type": "object",
-				"properties": map[string]any{},
-				"required": []string{},
-			},
-		},
-		{
-			"name": "fetch_credit_report",
-			"description": "Fetch user's credit report including credit score, loan details, and account history",
-			"input_schema": map[string]any{
-				"type": "object", 
-				"properties": map[string]any{},
-				"required": []string{},
-			},
-		},
-		{
-			"name": "fetch_epf_details",
-			"description": "Fetch user's Employee Provident Fund (EPF) details and balance",
-			"input_schema": map[string]any{
-				"type": "object",
-				"properties": map[string]any{},
-				"required": []string{},
+			FunctionDeclarations: []GeminiFunction{
+				{
+					Name:        "fetch_net_worth",
+					Description: "Fetch user's comprehensive net worth including assets, liabilities, and total wealth",
+					Parameters: map[string]any{
+						"type": "object",
+						"properties": map[string]any{},
+					},
+				},
+				{
+					Name:        "fetch_bank_transactions",
+					Description: "Fetch user's bank transaction history and account details",
+					Parameters: map[string]any{
+						"type": "object",
+						"properties": map[string]any{},
+					},
+				},
+				{
+					Name:        "fetch_mf_transactions",
+					Description: "Fetch user's mutual fund transactions and investment details",
+					Parameters: map[string]any{
+						"type": "object",
+						"properties": map[string]any{},
+					},
+				},
+				{
+					Name:        "fetch_credit_report",
+					Description: "Fetch user's credit report including credit score, loan details, and account history",
+					Parameters: map[string]any{
+						"type": "object",
+						"properties": map[string]any{},
+					},
+				},
+				{
+					Name:        "fetch_epf_details",
+					Description: "Fetch user's Employee Provident Fund (EPF) details and balance",
+					Parameters: map[string]any{
+						"type": "object",
+						"properties": map[string]any{},
+					},
+				},
 			},
 		},
 	}
 
-	requestBody := map[string]any{
-		"model":      "claude-3-5-sonnet-20241022",
-		"max_tokens": 1000,
-		"messages": []map[string]any{
+	requestBody := GeminiRequest{
+		Contents: []GeminiContent{
 			{
-				"role":    "user",
-				"content": fmt.Sprintf("You are Juno, a helpful financial AI assistant with access to the user's financial data through Fi Money. Please provide a helpful response to this query: %s", query),
+				Role: "user",
+				Parts: []GeminiPart{
+					{
+						Text: fmt.Sprintf("You are Juno, a helpful financial AI assistant with access to the user's financial data through Fi Money. Please provide a helpful response to this query: %s", query),
+					},
+				},
 			},
 		},
-		"tools": tools,
+		Tools: tools,
 	}
 
 	jsonData, err := json.Marshal(requestBody)
@@ -532,14 +558,13 @@ func (cs *CoordinatorServer) callClaudeAPIWithTools(query string, userId string,
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewBuffer(jsonData))
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=%s", cs.geminiAPIKey)
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", cs.anthropicAPIKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
@@ -552,47 +577,43 @@ func (cs *CoordinatorServer) callClaudeAPIWithTools(query string, userId string,
 		return "", fmt.Errorf("API returned status %d", resp.StatusCode)
 	}
 
-	var anthropicResp map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&anthropicResp); err != nil {
+	var geminiResp GeminiResponse
+	if err := json.NewDecoder(resp.Body).Decode(&geminiResp); err != nil {
 		return "", fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	// Handle tool calls if Claude wants to call Fi tools
-	if content, ok := anthropicResp["content"].([]any); ok {
+	// Handle function calls if Gemini wants to call Fi tools
+	if len(geminiResp.Candidates) > 0 {
+		candidate := geminiResp.Candidates[0]
 		var finalResponse strings.Builder
 		
-		for _, item := range content {
-			if contentItem, ok := item.(map[string]any); ok {
-				switch contentItem["type"] {
-				case "text":
-					if text, exists := contentItem["text"]; exists {
-						finalResponse.WriteString(fmt.Sprintf("%v", text))
-					}
-				case "tool_use":
-					// Claude wants to call a tool
-					toolName, _ := contentItem["name"].(string)
-					toolId, _ := contentItem["id"].(string)
-					
-					// Call Fi MCP tool for specific user (with Firebase isolation)
-					toolResult, err := cs.callFiMCP(toolName, userId, firebaseUID)
-					if err != nil {
-						log.Printf("Error calling Fi tool %s for user %s (Firebase: %s): %v", toolName, userId, firebaseUID, err)
-						toolResult = fmt.Sprintf("Error accessing %s data", toolName)
-					}
-					
-					// Check if Fi returned login_required - if so, return it directly without Claude processing
-					if strings.Contains(toolResult, "login_required") {
-						return toolResult, nil
-					}
-					
-					// Continue conversation with tool result
-					followUpResponse, err := cs.callClaudeAPIWithToolResult(query, toolName, toolId, toolResult, userId, firebaseUID)
-					if err != nil {
-						log.Printf("Error in follow-up call: %v", err)
-						finalResponse.WriteString(fmt.Sprintf("\nI retrieved your %s data but had trouble processing it.", toolName))
-					} else {
-						finalResponse.WriteString(followUpResponse)
-					}
+		for _, part := range candidate.Content.Parts {
+			if part.Text != "" {
+				// Regular text response
+				finalResponse.WriteString(part.Text)
+			} else if part.FunctionCall != nil {
+				// Gemini wants to call a function
+				functionName := part.FunctionCall.Name
+				
+				// Call Fi MCP tool for specific user (with Firebase isolation)
+				toolResult, err := cs.callFiMCP(functionName, userId, firebaseUID)
+				if err != nil {
+					log.Printf("Error calling Fi tool %s for user %s (Firebase: %s): %v", functionName, userId, firebaseUID, err)
+					toolResult = fmt.Sprintf("Error accessing %s data", functionName)
+				}
+				
+				// Check if Fi returned login_required - if so, return it directly without Gemini processing
+				if strings.Contains(toolResult, "login_required") {
+					return toolResult, nil
+				}
+				
+				// Continue conversation with tool result
+				followUpResponse, err := cs.callGeminiAPIWithFunctionResult(query, functionName, toolResult, userId, firebaseUID)
+				if err != nil {
+					log.Printf("Error in follow-up call: %v", err)
+					finalResponse.WriteString(fmt.Sprintf("\nI retrieved your %s data but had trouble processing it.", functionName))
+				} else {
+					finalResponse.WriteString(followUpResponse)
 				}
 			}
 		}
@@ -606,35 +627,35 @@ func (cs *CoordinatorServer) callClaudeAPIWithTools(query string, userId string,
 	return "I'm having trouble generating a response right now. Please try again.", nil
 }
 
-// Follow-up call to Claude with tool result
-func (cs *CoordinatorServer) callClaudeAPIWithToolResult(originalQuery, toolName, toolId, toolResult, userId, firebaseUID string) (string, error) {
-	log.Printf("Making follow-up Claude API call for user %s (Firebase: %s) with tool result from %s", userId, firebaseUID, toolName)
-	requestBody := map[string]any{
-		"model":      "claude-3-5-sonnet-20241022", 
-		"max_tokens": 1000,
-		"messages": []map[string]any{
+// Follow-up call to Gemini with function result
+func (cs *CoordinatorServer) callGeminiAPIWithFunctionResult(originalQuery, functionName, functionResult, userId, firebaseUID string) (string, error) {
+	log.Printf("Making follow-up Gemini API call for user %s (Firebase: %s) with function result from %s", userId, firebaseUID, functionName)
+	requestBody := GeminiRequest{
+		Contents: []GeminiContent{
 			{
-				"role":    "user",
-				"content": fmt.Sprintf("You are Juno, a helpful financial AI assistant. The user asked: %s", originalQuery),
-			},
-			{
-				"role": "assistant",
-				"content": []map[string]any{
+				Role: "user",
+				Parts: []GeminiPart{
 					{
-						"type": "tool_use",
-						"id":   toolId,
-						"name": toolName,
-						"input": map[string]any{},
+						Text: fmt.Sprintf("You are Juno, a helpful financial AI assistant. The user asked: %s", originalQuery),
 					},
 				},
 			},
 			{
-				"role": "user",
-				"content": []map[string]any{
+				Role: "model",
+				Parts: []GeminiPart{
 					{
-						"type":       "tool_result",
-						"tool_use_id": toolId,
-						"content":    toolResult,
+						FunctionCall: &GeminiFunctionCall{
+							Name: functionName,
+							Args: map[string]interface{}{},
+						},
+					},
+				},
+			},
+			{
+				Role: "user",
+				Parts: []GeminiPart{
+					{
+						Text: fmt.Sprintf("Function result: %s", functionResult),
 					},
 				},
 			},
@@ -646,14 +667,13 @@ func (cs *CoordinatorServer) callClaudeAPIWithToolResult(originalQuery, toolName
 		return "", fmt.Errorf("failed to marshal follow-up request: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewBuffer(jsonData))
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=%s", cs.geminiAPIKey)
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return "", fmt.Errorf("failed to create follow-up request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", cs.anthropicAPIKey) 
-	req.Header.Set("anthropic-version", "2023-06-01")
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
@@ -666,20 +686,17 @@ func (cs *CoordinatorServer) callClaudeAPIWithToolResult(originalQuery, toolName
 		return "", fmt.Errorf("follow-up API returned status %d", resp.StatusCode)
 	}
 
-	var anthropicResp map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&anthropicResp); err != nil {
+	var geminiResp GeminiResponse
+	if err := json.NewDecoder(resp.Body).Decode(&geminiResp); err != nil {
 		return "", fmt.Errorf("failed to decode follow-up response: %w", err)
 	}
 
 	// Extract text response
-	if content, ok := anthropicResp["content"].([]any); ok {
-		for _, item := range content {
-			if contentItem, ok := item.(map[string]any); ok {
-				if contentItem["type"] == "text" {
-					if text, exists := contentItem["text"]; exists {
-						return fmt.Sprintf("%v", text), nil
-					}
-				}
+	if len(geminiResp.Candidates) > 0 {
+		candidate := geminiResp.Candidates[0]
+		for _, part := range candidate.Content.Parts {
+			if part.Text != "" {
+				return part.Text, nil
 			}
 		}
 	}
@@ -775,11 +792,11 @@ func (cs *CoordinatorServer) processWebSocketQuery(msg MCPMessage) MCPMessage {
 		log.Printf("Processing query for user: %s (legacy mode)", userId)
 	}
 
-	// Process query with Claude API + Fi tools available for specific user
+	// Process query with Gemini API + Fi tools available for specific user
 	// Each user will have their own Fi client and authentication session
-	response, err := cs.callClaudeAPIWithTools(query, userId, firebaseUID)
+	response, err := cs.callGeminiAPIWithTools(query, userId, firebaseUID)
 	if err != nil {
-		log.Printf("Error calling Claude API with tools for user %s: %v", userId, err)
+		log.Printf("Error calling Gemini API with tools for user %s: %v", userId, err)
 		response = "I'm having trouble processing your request right now. Please try again."
 	}
 
