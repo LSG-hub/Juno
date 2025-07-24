@@ -41,10 +41,4 @@ firebase deploy --only hosting
 # Get the hosting URL
 HOSTING_URL="https://$PROJECT_ID.web.app"
 
-echo ""
-echo "🎉 Deployment complete!"
-echo ""
-echo "📱 Frontend URL: $HOSTING_URL"
-echo "🔧 Backend URL: $COORDINATOR_URL"
-echo ""
 echo "✅ Your Juno AI Assistant is now live!"
