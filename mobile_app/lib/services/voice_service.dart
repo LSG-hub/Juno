@@ -1,125 +1,126 @@
-// lib/services/voice_service.dart
-
 import 'dart:async';
-import 'dart:io'; // Required for File access
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:google_speech/google_speech.dart';
-import 'package:record/record.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 
 class VoiceService extends ChangeNotifier {
-  late SpeechToText _speechToText;
-  final Record _recorder = Record();
+  late stt.SpeechToText _speechToText;
 
   bool _isInitialized = false;
   bool _isListening = false;
   String _currentTranscript = '';
+  bool _speechEnabled = false;
 
   // Getters
-  bool get isAvailable => _isInitialized;
+  bool get isAvailable => _isInitialized && _speechEnabled;
   bool get isListening => _isListening;
+  bool get isInitialized => _isInitialized;
   String get currentTranscript => _currentTranscript;
 
-  // Initialize with service account credentials
+  // Initialize with browser's Web Speech API
   Future<bool> initialize() async {
     try {
-      final status = await Permission.microphone.request();
-      if (status != PermissionStatus.granted) {
-        debugPrint('Microphone permission denied');
-        return false;
-      }
-
-      final serviceAccountJson = await rootBundle.loadString(
-        'assets/credentials/juno-speech-credentials.json',
+      _speechToText = stt.SpeechToText();
+      
+      _speechEnabled = await _speechToText.initialize(
+        onError: (errorNotification) {
+          debugPrint('Speech error: ${errorNotification.errorMsg}');
+          _isListening = false;
+          notifyListeners();
+        },
+        onStatus: (status) {
+          debugPrint('Speech status: $status');
+          if (status == 'notListening') {
+            _isListening = false;
+            notifyListeners();
+          }
+        },
       );
-      final serviceAccount = ServiceAccount.fromString(serviceAccountJson);
 
-      _speechToText = SpeechToText.viaServiceAccount(serviceAccount);
-      _isInitialized = true;
+      _isInitialized = _speechEnabled;
       notifyListeners();
-      return true;
+      
+      if (!_speechEnabled) {
+        debugPrint('Web Speech API not available. Make sure you are using Chrome/Edge and have HTTPS.');
+      }
+      
+      return _speechEnabled;
     } catch (e) {
-      debugPrint('Failed to initialize Google Speech: $e');
+      debugPrint('Failed to initialize speech recognition: $e');
       return false;
     }
   }
 
-  // CHANGED: This method now controls the entire start/stop/process cycle.
-  void toggleListening({required Function(String) onResult}) async {
-    if (_isListening) {
-      // --- STOPPING LOGIC ---
+  // Start listening for speech
+  Future<void> startListening({
+    required Function(String) onFinalResult,
+    Function(String)? onInterimResult,
+  }) async {
+    if (!_speechEnabled || _isListening) return;
+
+    try {
+      _isListening = true;
+      _currentTranscript = '';
+      notifyListeners();
+
+      await _speechToText.listen(
+        onResult: (result) {
+          _currentTranscript = result.recognizedWords;
+          
+          if (result.finalResult) {
+            debugPrint('Final speech result: ${result.recognizedWords}');
+            onFinalResult(result.recognizedWords);
+            _isListening = false;
+          } else if (onInterimResult != null) {
+            onInterimResult(result.recognizedWords);
+          }
+          notifyListeners();
+        },
+        listenFor: const Duration(seconds: 30),
+        pauseFor: const Duration(seconds: 3),
+        partialResults: true,
+        localeId: 'en_US',
+        cancelOnError: true,
+        listenMode: stt.ListenMode.confirmation,
+      );
+    } catch (e) {
+      debugPrint('Error starting speech recognition: $e');
       _isListening = false;
       notifyListeners();
-
-      final path = await _recorder.stop();
-      if (path == null) {
-        debugPrint('Failed to stop recording or no path found.');
-        return;
-      }
-
-      debugPrint('Recording stopped. File at: $path');
-      _currentTranscript = 'Processing...';
-      notifyListeners();
-
-      // Read the audio file as bytes
-      final audioBytes = await File(path).readAsBytes();
-
-      // Configure recognition for a non-streaming request
-      final config = RecognitionConfig(
-        encoding: AudioEncoding.LINEAR16,
-        model: RecognitionModel.command_and_search,
-        enableAutomaticPunctuation: true,
-        sampleRateHertz: 16000,
-        languageCode: 'en-US',
-      );
-
-      // Use the non-streaming recognize API
-      try {
-        final response = await _speechToText.recognize(config, audioBytes);
-        if (response.results.isNotEmpty) {
-          final transcript = response.results.first.alternatives.first.transcript;
-          _currentTranscript = transcript;
-          debugPrint('Final transcript: $transcript');
-          onResult(transcript); // Send the final result back to the UI
-        } else {
-          _currentTranscript = 'Could not recognize speech.';
-        }
-      } catch (e) {
-        debugPrint('Google Speech recognition error: $e');
-        _currentTranscript = 'Error recognizing speech.';
-      } finally {
-        notifyListeners();
-      }
-    } else {
-      // --- STARTING LOGIC ---
-      if (!_isInitialized) {
-        debugPrint('Voice service not initialized.');
-        return;
-      }
-      
-      try {
-        await _recorder.start(
-          encoder: AudioEncoder.wav, // Use a supported encoder
-          samplingRate: 16000,
-          numChannels: 1,
-        );
-        _isListening = true;
-        _currentTranscript = 'Listening...';
-        debugPrint('Recording started...');
-        notifyListeners();
-      } catch (e) {
-        debugPrint('Error starting recording: $e');
-      }
     }
   }
-  
-  // REMOVED: The old startListening and stopListening methods are now
-  // consolidated into toggleListening for simplicity.
+
+  // Stop listening
+  Future<void> stopListening() async {
+    if (!_isListening) return;
+
+    try {
+      await _speechToText.stop();
+      _isListening = false;
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error stopping speech recognition: $e');
+    }
+  }
+
+  // Toggle listening state
+  void toggleListening({required Function(String) onResult}) async {
+    if (_isListening) {
+      await stopListening();
+    } else {
+      await startListening(
+        onFinalResult: onResult,
+        onInterimResult: (text) {
+          // Optional: Show interim results
+        },
+      );
+    }
+  }
 
   @override
   void dispose() {
-    _recorder.dispose();
+    if (_speechToText.isAvailable) {
+      _speechToText.stop();
+    }
     super.dispose();
   }
 }

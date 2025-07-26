@@ -22,6 +22,9 @@ echo "✅ Coordinator URL: $COORDINATOR_URL"
 echo "🔥 Setting up Firebase..."
 firebase use $PROJECT_ID --add
 
+#cleaning previous dependencies
+flutter clean
+
 # Install dependencies
 echo "📦 Installing Flutter dependencies..."
 flutter pub get
@@ -40,5 +43,5 @@ firebase deploy --only hosting
 
 # Get the hosting URL
 HOSTING_URL="https://$PROJECT_ID.web.app"
-
+echo "🌐 Your app is live at: $HOSTING_URL"
 echo "✅ Your Juno AI Assistant is now live!"

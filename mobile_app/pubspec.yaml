@@ -1,7 +1,7 @@
 name: mobile_app
 description: "Juno - AI-Powered Financial Assistant Mobile App"
 
-publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+publish_to: 'none'
 
 version: 1.0.0+1
 
@@ -29,27 +29,21 @@ dependencies:
   intl:
   url_launcher:
   
-  # Firebase Authentication (let Flutter choose compatible versions)
+  # Firebase Authentication
   firebase_core:
   firebase_auth:
   
   # Firestore for chat history storage
   cloud_firestore:
+  
+  # Web-compatible speech recognition (uses browser's Web Speech API)
   speech_to_text: ^7.2.0
-  permission_handler: ^12.0.1
-
-  google_speech: ^5.0.0
-  record: ^4.0.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-    
-
   flutter_lints:
 
 flutter:
   uses-material-design: true
-  assets:
-    - assets/credentials/juno-speech-credentials.json
-
+  # Remove the credentials asset - not needed for web
