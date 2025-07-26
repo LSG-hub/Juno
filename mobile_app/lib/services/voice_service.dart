@@ -1,198 +1,125 @@
-// lib/services/web_voice_service.dart
+// lib/services/voice_service.dart
 
-import 'dart:html' as html;
+import 'dart:async';
+import 'dart:io'; // Required for File access
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:google_speech/google_speech.dart';
+import 'package:record/record.dart';
+import 'package:permission_handler/permission_handler.dart';
 
-class WebVoiceService extends ChangeNotifier {
-  html.SpeechRecognition? _speechRecognition;
+class VoiceService extends ChangeNotifier {
+  late SpeechToText _speechToText;
+  final Record _recorder = Record();
+
+  bool _isInitialized = false;
   bool _isListening = false;
-  bool _isAvailable = false;
   String _currentTranscript = '';
-  String _browserInfo = '';
-  
+
+  // Getters
+  bool get isAvailable => _isInitialized;
   bool get isListening => _isListening;
-  bool get isAvailable => _isAvailable;
   String get currentTranscript => _currentTranscript;
-  String get browserInfo => _browserInfo;
-  
-  WebVoiceService() {
-    _checkBrowserSupport();
-  }
-  
-  void _checkBrowserSupport() {
-    _browserInfo = html.window.navigator.userAgent;
-    debugPrint('Browser: $_browserInfo');
-    
-    // Check if browser supports Web Speech API
-    try {
-      if (html.window.navigator.userAgent.contains('Chrome') ||
-          html.window.navigator.userAgent.contains('Edg/')) {
-        _isAvailable = true;
-        debugPrint('Web Speech API is supported');
-      } else {
-        _isAvailable = false;
-        debugPrint('Web Speech API may not be fully supported in this browser');
-      }
-    } catch (e) {
-      _isAvailable = false;
-      debugPrint('Error checking browser support: $e');
-    }
-  }
-  
+
+  // Initialize with service account credentials
   Future<bool> initialize() async {
-    if (!_isAvailable) {
-      debugPrint('Web Speech API not available');
-      return false;
-    }
-    
     try {
-      _speechRecognition = html.SpeechRecognition();
-      
-      // Configure speech recognition
-      _speechRecognition!.continuous = false;
-      _speechRecognition!.interimResults = true;
-      _speechRecognition!.lang = 'en-US';
-      _speechRecognition!.maxAlternatives = 1;
-      
-      // Set up event listeners
-      _setupEventListeners();
-      
-      debugPrint('Web Speech API initialized successfully');
+      final status = await Permission.microphone.request();
+      if (status != PermissionStatus.granted) {
+        debugPrint('Microphone permission denied');
+        return false;
+      }
+
+      final serviceAccountJson = await rootBundle.loadString(
+        'assets/credentials/juno-speech-credentials.json',
+      );
+      final serviceAccount = ServiceAccount.fromString(serviceAccountJson);
+
+      _speechToText = SpeechToText.viaServiceAccount(serviceAccount);
+      _isInitialized = true;
       notifyListeners();
       return true;
     } catch (e) {
-      debugPrint('Failed to initialize Web Speech API: $e');
-      _isAvailable = false;
-      notifyListeners();
+      debugPrint('Failed to initialize Google Speech: $e');
       return false;
     }
   }
-  
-  void _setupEventListeners() {
-    if (_speechRecognition == null) return;
-    
-    // On result
-    _speechRecognition!.onResult.listen((event) {
-      final results = event.results;
-      if (results != null && results.isNotEmpty) {
-        final lastResult = results.last;
-        if ((lastResult.length ?? 0) > 0) {
-          final transcript = lastResult.item(0).transcript;
-          _currentTranscript = transcript ?? '';
-          
-          debugPrint('Transcript: $_currentTranscript (Final: ${lastResult.isFinal})');
-          
-          if (lastResult.isFinal == true) {
-            // Final result - stop listening
-            _isListening = false;
-            notifyListeners();
-          } else {
-            // Interim result - update UI
-            notifyListeners();
-          }
-        }
-      }
-    });
-    
-    // On error
-    _speechRecognition!.onError.listen((event) {
-      debugPrint('Speech recognition error: ${event.error}');
-      _isListening = false;
-      _currentTranscript = '';
-      
-      // Show user-friendly error
-      if (event.error == 'not-allowed') {
-        _currentTranscript = 'Microphone permission denied';
-      } else if (event.error == 'no-speech') {
-        _currentTranscript = 'No speech detected';
-      }
-      
-      notifyListeners();
-    });
-    
-    // On end
-    _speechRecognition!.onEnd.listen((event) {
-      debugPrint('Speech recognition ended');
-      _isListening = false;
-      notifyListeners();
-    });
-    
-    // On start
-    _speechRecognition!.onStart.listen((event) {
-      debugPrint('Speech recognition started');
-      _isListening = true;
-      _currentTranscript = '';
-      notifyListeners();
-    });
-  }
-  
-  Future<void> startListening({
-    required Function(String) onResult,
-  }) async {
-    if (!_isAvailable || _speechRecognition == null || _isListening) {
-      debugPrint('Cannot start listening: Available=$_isAvailable, Listening=$_isListening');
-      return;
-    }
-    
-    try {
-      // Set up result handler
-      _speechRecognition!.onResult.listen((event) {
-        final results = event.results;
-        if (results != null && results.isNotEmpty) {
-          final lastResult = results.last;
-          if ((lastResult.length ?? 0) > 0) {
-            final transcript = lastResult.item(0).transcript ?? '';
-            _currentTranscript = transcript;
-            
-            if (lastResult.isFinal == true && transcript.isNotEmpty) {
-              onResult(transcript);
-              _currentTranscript = '';
-            }
-            
-            notifyListeners();
-          }
-        }
-      });
-      
-      // Start recognition
-      _speechRecognition!.start();
-      debugPrint('Started speech recognition');
-    } catch (e) {
-      debugPrint('Error starting speech recognition: $e');
-      _isListening = false;
-      notifyListeners();
-    }
-  }
-  
-  Future<void> stopListening() async {
-    if (!_isListening || _speechRecognition == null) return;
-    
-    try {
-      _speechRecognition!.stop();
-      _isListening = false;
-      _currentTranscript = '';
-      notifyListeners();
-      debugPrint('Stopped speech recognition');
-    } catch (e) {
-      debugPrint('Error stopping speech recognition: $e');
-    }
-  }
-  
-  Future<void> toggleListening({
-    required Function(String) onResult,
-  }) async {
+
+  // CHANGED: This method now controls the entire start/stop/process cycle.
+  void toggleListening({required Function(String) onResult}) async {
     if (_isListening) {
-      await stopListening();
+      // --- STOPPING LOGIC ---
+      _isListening = false;
+      notifyListeners();
+
+      final path = await _recorder.stop();
+      if (path == null) {
+        debugPrint('Failed to stop recording or no path found.');
+        return;
+      }
+
+      debugPrint('Recording stopped. File at: $path');
+      _currentTranscript = 'Processing...';
+      notifyListeners();
+
+      // Read the audio file as bytes
+      final audioBytes = await File(path).readAsBytes();
+
+      // Configure recognition for a non-streaming request
+      final config = RecognitionConfig(
+        encoding: AudioEncoding.LINEAR16,
+        model: RecognitionModel.command_and_search,
+        enableAutomaticPunctuation: true,
+        sampleRateHertz: 16000,
+        languageCode: 'en-US',
+      );
+
+      // Use the non-streaming recognize API
+      try {
+        final response = await _speechToText.recognize(config, audioBytes);
+        if (response.results.isNotEmpty) {
+          final transcript = response.results.first.alternatives.first.transcript;
+          _currentTranscript = transcript;
+          debugPrint('Final transcript: $transcript');
+          onResult(transcript); // Send the final result back to the UI
+        } else {
+          _currentTranscript = 'Could not recognize speech.';
+        }
+      } catch (e) {
+        debugPrint('Google Speech recognition error: $e');
+        _currentTranscript = 'Error recognizing speech.';
+      } finally {
+        notifyListeners();
+      }
     } else {
-      await startListening(onResult: onResult);
+      // --- STARTING LOGIC ---
+      if (!_isInitialized) {
+        debugPrint('Voice service not initialized.');
+        return;
+      }
+      
+      try {
+        await _recorder.start(
+          encoder: AudioEncoder.wav, // Use a supported encoder
+          samplingRate: 16000,
+          numChannels: 1,
+        );
+        _isListening = true;
+        _currentTranscript = 'Listening...';
+        debugPrint('Recording started...');
+        notifyListeners();
+      } catch (e) {
+        debugPrint('Error starting recording: $e');
+      }
     }
   }
   
+  // REMOVED: The old startListening and stopListening methods are now
+  // consolidated into toggleListening for simplicity.
+
   @override
   void dispose() {
-    if (_speechRecognition != null && _isListening) {
-      _speechRecognition!.stop();
-    }
+    _recorder.dispose();
     super.dispose();
   }
 }

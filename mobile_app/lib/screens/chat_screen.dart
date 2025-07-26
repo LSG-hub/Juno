@@ -20,34 +20,37 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _textController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final FocusNode _focusNode = FocusNode();
-  final WebVoiceService _voiceService = WebVoiceService();
+  final VoiceService _voiceService = VoiceService();
   String _selectedUserId = '1111111111'; // Default test user
 
   @override
   void initState() {
     super.initState();
-    
+
     // Initialize voice service
-    _initializeVoice();
-    
+    _voiceService.initialize();
+
     // Initialize chat
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final chatProvider = context.read<ChatProvider>();
       final authService = context.read<AuthService>();
-      
+
       chatProvider.resetForNewAuth();
       chatProvider.initialize();
-      
+
       if (authService.firebaseUID != null) {
         chatProvider.switchToUser(_selectedUserId, authService.firebaseUID!);
       }
+
+      // Add listener to update UI on text changes (for clear button etc.)
+      _textController.addListener(() => setState(() {}));
     });
   }
 
   Future<void> _initializeVoice() async {
     final success = await _voiceService.initialize();
     debugPrint('Voice service initialized: $success');
-    
+
     if (!success && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -72,10 +75,10 @@ class _ChatScreenState extends State<ChatScreen> {
     if (text.isNotEmpty) {
       final authService = context.read<AuthService>();
       context.read<ChatProvider>().sendMessage(
-        text, 
-        _selectedUserId,
-        firebaseUID: authService.firebaseUID,
-      );
+            text,
+            _selectedUserId,
+            firebaseUID: authService.firebaseUID,
+          );
       _textController.clear();
       _scrollToBottom();
     }
@@ -84,11 +87,11 @@ class _ChatScreenState extends State<ChatScreen> {
   void _onUserChanged(String userId) async {
     final authService = context.read<AuthService>();
     final chatProvider = context.read<ChatProvider>();
-    
+
     setState(() {
       _selectedUserId = userId;
     });
-    
+
     await chatProvider.switchToUser(userId, authService.firebaseUID ?? '');
   }
 
@@ -107,7 +110,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    
+
     return Scaffold(
       backgroundColor: theme.colorScheme.surfaceVariant,
       appBar: AppBar(
@@ -129,9 +132,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     margin: const EdgeInsets.only(right: 8),
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: chatProvider.isConnected
-                          ? Colors.green
-                          : Colors.red,
+                      color: chatProvider.isConnected ? Colors.green : Colors.red,
                     ),
                   ),
                   Text(
@@ -156,38 +157,44 @@ class _ChatScreenState extends State<ChatScreen> {
       body: Column(
         children: [
           // Voice status indicator
-          if (_voiceService.isListening)
-            Container(
-              padding: const EdgeInsets.all(12),
-              color: theme.colorScheme.primaryContainer,
-              child: Row(
-                children: [
-                  Icon(Icons.mic, color: theme.colorScheme.primary),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      _voiceService.currentTranscript.isEmpty 
-                          ? 'Listening...' 
-                          : _voiceService.currentTranscript,
-                      style: TextStyle(color: theme.colorScheme.onPrimaryContainer),
+          ListenableBuilder(
+            listenable: _voiceService,
+            builder: (context, child) {
+              if (!_voiceService.isListening) return const SizedBox.shrink();
+
+              return Container(
+                padding: const EdgeInsets.all(12),
+                color: theme.colorScheme.primaryContainer,
+                child: Row(
+                  children: [
+                    Icon(Icons.mic, color: theme.colorScheme.primary),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _voiceService.currentTranscript.isEmpty
+                            ? 'Listening...'
+                            : _voiceService.currentTranscript,
+                        style: TextStyle(color: theme.colorScheme.onPrimaryContainer),
+                      ),
                     ),
-                  ),
-                ],
-              ),
-            ),
-          
+                  ],
+                ),
+              );
+            },
+          ),
+
           Expanded(
             child: Consumer<ChatProvider>(
               builder: (context, chatProvider, child) {
                 if (chatProvider.connectionError != null) {
                   return _buildErrorState(chatProvider);
                 }
-                
+
                 return _buildChatList(chatProvider);
               },
             ),
           ),
-          
+
           _buildInputArea(),
         ],
       ),
@@ -196,7 +203,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _buildErrorState(ChatProvider chatProvider) {
     final theme = Theme.of(context);
-    
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -234,6 +241,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildChatList(ChatProvider chatProvider) {
+    // Scroll to bottom after the list view builds
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+
     return ListView.builder(
       controller: _scrollController,
       padding: const EdgeInsets.symmetric(vertical: 16),
@@ -242,14 +252,14 @@ class _ChatScreenState extends State<ChatScreen> {
         if (index == chatProvider.messages.length && chatProvider.isTyping) {
           return const TypingIndicator();
         }
-        
+
         final message = chatProvider.messages[index];
         final showTimestamp = index == 0 ||
             chatProvider.messages[index - 1].timestamp
                 .difference(message.timestamp)
                 .inMinutes
                 .abs() > 5;
-        
+
         return MessageWidget(
           message: message,
           showTimestamp: showTimestamp,
@@ -258,163 +268,103 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _buildInputArea() {
-    final theme = Theme.of(context);
-    
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
-        boxShadow: [
-          BoxShadow(
-            color: theme.shadowColor.withOpacity(0.1),
-            blurRadius: 8,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      child: SafeArea(
-        child: Consumer<ChatProvider>(
-          builder: (context, chatProvider, child) {
-            return Row(
-              children: [
-                // Voice button with state management
-                ListenableBuilder(
-                  listenable: _voiceService,
-                  builder: (context, child) {
-                    return Container(
-                      decoration: BoxDecoration(
-                        color: _voiceService.isListening
-                            ? theme.colorScheme.errorContainer
-                            : _voiceService.isAvailable
-                                ? theme.colorScheme.primaryContainer
-                                : theme.colorScheme.surfaceVariant,
-                        shape: BoxShape.circle,
-                      ),
-                      child: IconButton(
-                        onPressed: chatProvider.isConnected
-                            ? () {
-                                if (_voiceService.isAvailable) {
-                                  _voiceService.toggleListening(
-                                    onResult: (text) {
-                                      _textController.text = text;
-                                      _sendMessage();
-                                    },
-                                  );
-                                } else {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text('Voice input requires Chrome or Edge browser'),
-                                    ),
-                                  );
-                                }
-                              }
-                            : null,
-                        icon: Icon(
-                          _voiceService.isListening 
-                              ? Icons.stop 
-                              : _voiceService.isAvailable 
-                                  ? Icons.mic 
-                                  : Icons.mic_off,
-                          color: _voiceService.isListening
-                              ? theme.colorScheme.error
-                              : _voiceService.isAvailable
-                                  ? theme.colorScheme.primary
-                                  : theme.colorScheme.onSurfaceVariant,
-                        ),
-                        tooltip: !_voiceService.isAvailable
-                            ? 'Voice input requires Chrome or Edge'
-                            : _voiceService.isListening
-                                ? 'Stop listening'
-                                : 'Start voice input',
-                      ),
-                    );
-                  },
-                ),
-                
-                const SizedBox(width: 12),
-                
-                // Text input field
-                Expanded(
-                  child: TextField(
-                    controller: _textController,
-                    focusNode: _focusNode,
-                    enabled: chatProvider.isConnected,
-                    decoration: InputDecoration(
-                      hintText: chatProvider.isConnected
-                          ? 'Ask me about your finances...'
-                          : 'Connecting to Juno...',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(24),
-                        borderSide: BorderSide.none,
-                      ),
-                      filled: true,
-                      fillColor: theme.colorScheme.surfaceContainerHighest,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 12,
-                      ),
-                      suffixIcon: _textController.text.isNotEmpty
-                          ? IconButton(
-                              onPressed: () {
-                                _textController.clear();
-                                setState(() {});
-                              },
-                              icon: const Icon(Icons.clear),
-                            )
-                          : null,
-                    ),
-                    textInputAction: TextInputAction.send,
-                    onSubmitted: chatProvider.isConnected ? (_) => _sendMessage() : null,
-                    onChanged: (text) {
-                      setState(() {}); // Rebuild to show/hide clear button
-                    },
-                    maxLines: null,
-                    textCapitalization: TextCapitalization.sentences,
-                  ),
-                ),
-                
-                const SizedBox(width: 8),
-                
-                // Send button
-                ValueListenableBuilder<TextEditingValue>(
-                  valueListenable: _textController,
-                  builder: (context, value, child) {
-                    final hasText = value.text.trim().isNotEmpty;
-                    return AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      child: FloatingActionButton(
-                        onPressed: hasText && chatProvider.isConnected
-                            ? _sendMessage
-                            : null,
-                        backgroundColor: hasText && chatProvider.isConnected
-                            ? theme.colorScheme.primary
-                            : theme.colorScheme.surfaceContainerHighest,
-                        foregroundColor: hasText && chatProvider.isConnected
-                            ? theme.colorScheme.onPrimary
-                            : theme.colorScheme.onSurfaceVariant,
-                        mini: true,
-                        child: chatProvider.isTyping
-                            ? SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation<Color>(
-                                    theme.colorScheme.onPrimary,
-                                  ),
-                                ),
-                              )
-                            : const Icon(Icons.send),
-                      ),
-                    );
-                  },
-                ),
-              ],
-            );
-          },
+ Widget _buildInputArea() {
+  final theme = Theme.of(context);
+  
+  return Container(
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      color: theme.colorScheme.surface,
+      boxShadow: [
+        BoxShadow(
+          color: theme.shadowColor.withOpacity(0.1),
+          blurRadius: 8,
+          offset: const Offset(0, -2),
         ),
+      ],
+    ),
+    child: SafeArea(
+      child: Consumer<ChatProvider>(
+        builder: (context, chatProvider, child) {
+          return Row(
+            children: [
+              // NEW: Voice button
+              ChangeNotifierProvider.value(
+                value: _voiceService,
+                child: Consumer<VoiceService>(
+                  builder: (context, voice, child) {
+                    return IconButton(
+                      onPressed: voice.isAvailable && chatProvider.isConnected
+                          ? () {
+                              voice.toggleListening(
+                                onResult: (text) {
+                                  _textController.text = text;
+                                  _sendMessage();
+                                },
+                              );
+                            }
+                          : null,
+                      icon: Icon(
+                        voice.isListening ? Icons.stop : Icons.mic,
+                        color: voice.isListening 
+                            ? theme.colorScheme.error 
+                            : theme.colorScheme.primary,
+                      ),
+                      style: IconButton.styleFrom(
+                        backgroundColor: voice.isListening
+                            ? theme.colorScheme.errorContainer
+                            : theme.colorScheme.primaryContainer,
+                      ),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              
+              // Existing text field
+              Expanded(
+                child: TextField(
+                  controller: _textController,
+                  focusNode: _focusNode,
+                  enabled: chatProvider.isConnected,
+                  decoration: InputDecoration(
+                    hintText: chatProvider.isConnected
+                        ? 'Ask me about your finances...'
+                        : 'Connecting to Juno...',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(24),
+                      borderSide: BorderSide.none,
+                    ),
+                    filled: true,
+                    fillColor: theme.colorScheme.surfaceContainerHighest,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 12,
+                    ),
+                  ),
+                  textInputAction: TextInputAction.send,
+                  onSubmitted: chatProvider.isConnected ? (_) => _sendMessage() : null,
+                ),
+              ),
+              
+              const SizedBox(width: 8),
+              
+              // Existing send button
+              IconButton(
+                onPressed: _textController.text.trim().isNotEmpty && chatProvider.isConnected
+                    ? _sendMessage
+                    : null,
+                icon: const Icon(Icons.send),
+                style: IconButton.styleFrom(
+                  foregroundColor: theme.colorScheme.onPrimary,
+                  backgroundColor: theme.colorScheme.primary,
+                ),
+              ),
+            ],
+          );
+        },
       ),
-    );
-  }
+    ),
+  );
+}
 }
