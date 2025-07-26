@@ -1,7 +1,10 @@
+// lib/screens/chat_screen.dart
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/chat_provider.dart';
 import '../services/auth_service.dart';
+import '../services/voice_service.dart';
 import '../widgets/message_widget.dart';
 import '../widgets/typing_indicator.dart';
 import '../widgets/user_selector_widget.dart';
@@ -17,25 +20,42 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _textController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final FocusNode _focusNode = FocusNode();
+  final WebVoiceService _voiceService = WebVoiceService();
   String _selectedUserId = '1111111111'; // Default test user
 
   @override
   void initState() {
     super.initState();
-    // Initialize chat provider and reset for new auth session
+    
+    // Initialize voice service
+    _initializeVoice();
+    
+    // Initialize chat
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final chatProvider = context.read<ChatProvider>();
       final authService = context.read<AuthService>();
       
-      // Reset chat for clean session
       chatProvider.resetForNewAuth();
       chatProvider.initialize();
       
-      // Initialize with current Firebase user and default Fi user
       if (authService.firebaseUID != null) {
         chatProvider.switchToUser(_selectedUserId, authService.firebaseUID!);
       }
     });
+  }
+
+  Future<void> _initializeVoice() async {
+    final success = await _voiceService.initialize();
+    debugPrint('Voice service initialized: $success');
+    
+    if (!success && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Voice input is available in Chrome and Edge browsers'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
   }
 
   @override
@@ -43,6 +63,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _textController.dispose();
     _scrollController.dispose();
     _focusNode.dispose();
+    _voiceService.dispose();
     super.dispose();
   }
 
@@ -64,12 +85,11 @@ class _ChatScreenState extends State<ChatScreen> {
     final authService = context.read<AuthService>();
     final chatProvider = context.read<ChatProvider>();
     
-    // Switch to the selected user's chat history
-    await chatProvider.switchToUser(userId, authService.firebaseUID ?? '');
-    
     setState(() {
       _selectedUserId = userId;
     });
+    
+    await chatProvider.switchToUser(userId, authService.firebaseUID ?? '');
   }
 
   void _scrollToBottom() {
@@ -89,155 +109,73 @@ class _ChatScreenState extends State<ChatScreen> {
     final theme = Theme.of(context);
     
     return Scaffold(
+      backgroundColor: theme.colorScheme.surfaceVariant,
       appBar: AppBar(
-        title: Row(
-          children: [
-            Container(
-              width: 40,
-              height: 40,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    theme.colorScheme.primary,
-                    theme.colorScheme.primaryContainer,
-                  ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.psychology,
-                color: Colors.white,
-                size: 24,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Juno',
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  Consumer2<ChatProvider, AuthService>(
-                    builder: (context, chatProvider, authService, child) {
-                      String subtitle = '';
-                      Color color = theme.colorScheme.error;
-                      
-                      if (chatProvider.isConnected) {
-                        subtitle = '${authService.displayName} • AI Financial Assistant';
-                        color = theme.colorScheme.primary;
-                      } else if (chatProvider.isConnecting) {
-                        subtitle = 'Connecting...';
-                        color = theme.colorScheme.onSurfaceVariant;
-                      } else {
-                        subtitle = 'Offline';
-                        color = theme.colorScheme.error;
-                      }
-                      
-                      return Text(
-                        subtitle,
-                        style: theme.textTheme.bodySmall?.copyWith(color: color),
-                        overflow: TextOverflow.ellipsis,
-                      );
-                    },
-                  ),
-                ],
-              ),
-            ),
-            // User selector widget
-            UserSelectorWidget(
-              selectedUserId: _selectedUserId,
-              onUserChanged: _onUserChanged,
-            ),
-            const SizedBox(width: 8),
-          ],
-        ),
+        title: const Text('Juno - Web'),
+        backgroundColor: theme.colorScheme.inversePrimary,
         actions: [
-          Consumer2<ChatProvider, AuthService>(
-            builder: (context, chatProvider, authService, child) {
-              return PopupMenuButton<String>(
-                onSelected: (value) async {
-                  switch (value) {
-                    case 'clear':
-                      await chatProvider.clearCurrentUserChat();
-                      break;
-                    case 'clear_all':
-                      await chatProvider.clearAllUsersChats();
-                      break;
-                    case 'reconnect':
-                      chatProvider.reconnect();
-                      break;
-                    case 'logout':
-                      // Cleanup Fi clients for this Firebase user
-                      if (authService.firebaseUID != null) {
-                        await chatProvider.cleanupUser(
-                          authService.firebaseUID!, 
-                          isAnonymous: authService.isAnonymous,
-                        );
-                      }
-                      // Sign out from Firebase
-                      await authService.signOut();
-                      break;
-                  }
-                },
-                itemBuilder: (context) => [
-                  const PopupMenuItem(
-                    value: 'clear',
-                    child: Row(
-                      children: [
-                        Icon(Icons.clear_all),
-                        SizedBox(width: 8),
-                        Text('Clear Chat'),
-                      ],
+          UserSelectorWidget(
+            selectedUserId: _selectedUserId,
+            onUserChanged: _onUserChanged,
+          ),
+          const SizedBox(width: 8),
+          Consumer<ChatProvider>(
+            builder: (context, chatProvider, child) {
+              return Row(
+                children: [
+                  Container(
+                    width: 8,
+                    height: 8,
+                    margin: const EdgeInsets.only(right: 8),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: chatProvider.isConnected
+                          ? Colors.green
+                          : Colors.red,
                     ),
                   ),
-                  const PopupMenuItem(
-                    value: 'clear_all',
-                    child: Row(
-                      children: [
-                        Icon(Icons.delete_sweep),
-                        SizedBox(width: 8),
-                        Text('Clear All Chats'),
-                      ],
-                    ),
+                  Text(
+                    chatProvider.isConnected ? 'Connected' : 'Disconnected',
+                    style: theme.textTheme.bodySmall,
                   ),
-                  if (!chatProvider.isConnected)
-                    const PopupMenuItem(
-                      value: 'reconnect',
-                      child: Row(
-                        children: [
-                          Icon(Icons.refresh),
-                          SizedBox(width: 8),
-                          Text('Reconnect'),
-                        ],
-                      ),
+                  const SizedBox(width: 16),
+                  if (chatProvider.messages.isNotEmpty)
+                    IconButton(
+                      icon: const Icon(Icons.clear_all),
+                      onPressed: () => chatProvider.clearMessages(),
+                      tooltip: 'Clear chat',
                     ),
-                  const PopupMenuItem(
-                    value: 'logout',
-                    child: Row(
-                      children: [
-                        Icon(Icons.logout),
-                        SizedBox(width: 8),
-                        Text('Sign Out'),
-                      ],
-                    ),
-                  ),
                 ],
               );
             },
           ),
         ],
-        backgroundColor: theme.colorScheme.surface,
         surfaceTintColor: theme.colorScheme.surfaceTint,
         elevation: 0,
       ),
       body: Column(
         children: [
+          // Voice status indicator
+          if (_voiceService.isListening)
+            Container(
+              padding: const EdgeInsets.all(12),
+              color: theme.colorScheme.primaryContainer,
+              child: Row(
+                children: [
+                  Icon(Icons.mic, color: theme.colorScheme.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _voiceService.currentTranscript.isEmpty 
+                          ? 'Listening...' 
+                          : _voiceService.currentTranscript,
+                      style: TextStyle(color: theme.colorScheme.onPrimaryContainer),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          
           Expanded(
             child: Consumer<ChatProvider>(
               builder: (context, chatProvider, child) {
@@ -249,6 +187,7 @@ class _ChatScreenState extends State<ChatScreen> {
               },
             ),
           ),
+          
           _buildInputArea(),
         ],
       ),
@@ -328,7 +267,7 @@ class _ChatScreenState extends State<ChatScreen> {
         color: theme.colorScheme.surface,
         boxShadow: [
           BoxShadow(
-            color: theme.shadowColor.withValues(alpha: 0.1),
+            color: theme.shadowColor.withOpacity(0.1),
             blurRadius: 8,
             offset: const Offset(0, -2),
           ),
@@ -339,6 +278,63 @@ class _ChatScreenState extends State<ChatScreen> {
           builder: (context, chatProvider, child) {
             return Row(
               children: [
+                // Voice button with state management
+                ListenableBuilder(
+                  listenable: _voiceService,
+                  builder: (context, child) {
+                    return Container(
+                      decoration: BoxDecoration(
+                        color: _voiceService.isListening
+                            ? theme.colorScheme.errorContainer
+                            : _voiceService.isAvailable
+                                ? theme.colorScheme.primaryContainer
+                                : theme.colorScheme.surfaceVariant,
+                        shape: BoxShape.circle,
+                      ),
+                      child: IconButton(
+                        onPressed: chatProvider.isConnected
+                            ? () {
+                                if (_voiceService.isAvailable) {
+                                  _voiceService.toggleListening(
+                                    onResult: (text) {
+                                      _textController.text = text;
+                                      _sendMessage();
+                                    },
+                                  );
+                                } else {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Voice input requires Chrome or Edge browser'),
+                                    ),
+                                  );
+                                }
+                              }
+                            : null,
+                        icon: Icon(
+                          _voiceService.isListening 
+                              ? Icons.stop 
+                              : _voiceService.isAvailable 
+                                  ? Icons.mic 
+                                  : Icons.mic_off,
+                          color: _voiceService.isListening
+                              ? theme.colorScheme.error
+                              : _voiceService.isAvailable
+                                  ? theme.colorScheme.primary
+                                  : theme.colorScheme.onSurfaceVariant,
+                        ),
+                        tooltip: !_voiceService.isAvailable
+                            ? 'Voice input requires Chrome or Edge'
+                            : _voiceService.isListening
+                                ? 'Stop listening'
+                                : 'Start voice input',
+                      ),
+                    );
+                  },
+                ),
+                
+                const SizedBox(width: 12),
+                
+                // Text input field
                 Expanded(
                   child: TextField(
                     controller: _textController,
@@ -377,7 +373,10 @@ class _ChatScreenState extends State<ChatScreen> {
                     textCapitalization: TextCapitalization.sentences,
                   ),
                 ),
+                
                 const SizedBox(width: 8),
+                
+                // Send button
                 ValueListenableBuilder<TextEditingValue>(
                   valueListenable: _textController,
                   builder: (context, value, child) {

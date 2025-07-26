@@ -183,31 +183,27 @@ class ChatProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> sendMessage(String text, String userId, {String? firebaseUID}) async {
-    if (text.trim().isEmpty || !_isConnected) return;
+Future<void> sendMessage(String text, String recipientUserId, {String? firebaseUID}) async {
+  if (text.trim().isEmpty || !_isConnected) return;
 
-    try {
-      _isTyping = true;
-      notifyListeners();
+  try {
+    _isTyping = true;
+    notifyListeners();
 
-      // Send message through WebSocket service with userId and optional firebaseUID
-      // The service will add the user message and handle the response
-      await _webSocketService.sendMessage(text.trim(), userId, firebaseUID: firebaseUID);
-    } catch (error) {
-      // Add error message
-      final errorMessage = ChatMessage(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
-        text: "Sorry, I'm having trouble processing your request. Please try again.",
-        isUser: false,
-        timestamp: DateTime.now(),
-        status: MessageStatus.error,
-      );
-      _addMessage(errorMessage);
-    } finally {
-      _isTyping = false;
-      notifyListeners();
-    }
+    await _webSocketService.sendMessage(text.trim(), recipientUserId, firebaseUID: firebaseUID);
+  } catch (error) {
+    final errorMessage = ChatMessage(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      text: "Sorry, I'm having trouble processing your request. Please try again.",
+      isUser: false,
+      timestamp: DateTime.now(),
+    );
+    _addMessage(errorMessage);
+  } finally {
+    _isTyping = false;
+    notifyListeners();
   }
+}
 
   // Cleanup method for Firebase user logout
   Future<void> cleanupUser(String firebaseUID, {bool isAnonymous = false}) async {
