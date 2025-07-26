@@ -357,13 +357,11 @@
         </div>
     </div>
 <script>
-    // Allowed numbers from Go template
     const allowedNumbers = [
         {{- range $i, $num := .AllowedMobileNumbers -}}
-            {{if $i}},{{end}}"{{$num}}"
+        {{- if $i -}},{{- end -}}"{{$num}}"
         {{- end -}}
     ];
-
     document.getElementById('loginForm').addEventListener('submit', function(e) {
         const phone = document.getElementById('phoneNumber').value.trim();
         if (!allowedNumbers.includes(phone)) {

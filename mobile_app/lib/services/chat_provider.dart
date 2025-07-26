@@ -209,7 +209,7 @@ Future<void> sendMessage(String text, String recipientUserId, {String? firebaseU
   Future<void> cleanupUser(String firebaseUID, {bool isAnonymous = false}) async {
     await _webSocketService.cleanupUser(firebaseUID);
     
-    // For anonymous users, completely delete their data from Firestore (pure test mode)
+    // For anonymous users, completely delete their data from Firestore
     if (isAnonymous) {
       await _deleteAnonymousUserData(firebaseUID);
     }

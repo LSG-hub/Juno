@@ -14,7 +14,7 @@ gcloud services enable run.googleapis.com
 gcloud services enable cloudbuild.googleapis.com
 gcloud services enable firebase.googleapis.com
 
-# Deploy fi-mcp-server FIRST (no dependencies)
+# Deploy fi-mcp-server 
 echo "🏗️ Deploying fi-mcp-server..."
 cd fi-mcp-server
 gcloud run deploy fi-mcp-server \
@@ -31,7 +31,7 @@ cd ..
 FI_SERVER_URL=$(gcloud run services describe fi-mcp-server --region=us-central1 --format='value(status.url)')
 echo "✅ Fi-MCP Server deployed: $FI_SERVER_URL"
 
-# Deploy context-agent-mcp (depends on fi-mcp-server)
+# Deploy context-agent-mcp 
 echo "🏗️ Deploying context-agent-mcp..."
 cd backend/context_agent_mcp
 gcloud run deploy context-agent-mcp \
@@ -49,7 +49,7 @@ cd ../..
 CONTEXT_URL=$(gcloud run services describe context-agent-mcp --region=us-central1 --format='value(status.url)')
 echo "✅ Context Agent deployed: $CONTEXT_URL"
 
-# Deploy security-agent-mcp (depends on fi-mcp-server)
+# Deploy security-agent-mcp 
 echo "🏗️ Deploying security-agent-mcp..."
 cd backend/security_agent_mcp
 gcloud run deploy security-agent-mcp \
@@ -67,7 +67,7 @@ cd ../..
 SECURITY_URL=$(gcloud run services describe security-agent-mcp --region=us-central1 --format='value(status.url)')
 echo "✅ Security Agent deployed: $SECURITY_URL"
 
-# Deploy coordinator-mcp LAST (depends on all other services)
+# Deploy coordinator-mcp 
 echo "🏗️ Deploying coordinator-mcp..."
 cd backend/coordinator_mcp
 
@@ -105,7 +105,7 @@ echo "📱 Update your Flutter app with the coordinator URL:"
 echo "   $COORDINATOR_URL"
 echo ""
 
-# Optional: Deploy Flutter web app
+# Deploy Flutter web app
 read -p "Deploy Flutter app to Firebase Hosting? (y/n) " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then

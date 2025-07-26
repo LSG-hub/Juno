@@ -27,7 +27,7 @@ class AuthService extends ChangeNotifier {
     });
   }
 
-  // Sign in anonymously (perfect for hackathon judges)
+  // Sign in anonymously
   Future<UserCredential?> signInAnonymously() async {
     try {
       UserCredential result = await _auth.signInAnonymously();

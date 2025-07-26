@@ -1,5 +1,5 @@
 services:
-  # Existing Fi MCP Server (Financial Data)
+  # Fi MCP Server (Financial Data)
   fi-mcp-server:
     build:
       context: ./fi-mcp-server
@@ -30,7 +30,6 @@ services:
       - SECURITY_AGENT_URL=${SECURITY_AGENT_URL:-http://security-agent-mcp:8083}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-      # NEW: Translation configuration
       - ENABLE_TRANSLATION=${ENABLE_TRANSLATION:-false}
       - DEFAULT_LANGUAGE=${DEFAULT_LANGUAGE:-en}
       - GOOGLE_TRANSLATE_API_KEY=${GOOGLE_TRANSLATE_API_KEY}
@@ -74,7 +73,7 @@ services:
       timeout: 10s
       retries: 3
 
-  # Mobile App (Flutter Web) - Optional, remove if running natively
+  # Mobile App (Flutter Web)
   mobile-app:
     build:
       context: ./mobile_app

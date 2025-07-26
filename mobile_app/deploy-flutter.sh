@@ -18,7 +18,7 @@ fi
 
 echo "✅ Coordinator URL: $COORDINATOR_URL"
 
-# Update Firebase project (if not already done)
+# Update Firebase project 
 echo "🔥 Setting up Firebase..."
 firebase use $PROJECT_ID --add
 

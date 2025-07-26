@@ -110,7 +110,6 @@ class VoiceService extends ChangeNotifier {
       await startListening(
         onFinalResult: onResult,
         onInterimResult: (text) {
-          // Optional: Show interim results
         },
       );
     }
