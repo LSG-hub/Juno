@@ -57,6 +57,9 @@ dependencies:
   
   # Firestore for chat history storage
   cloud_firestore:
+  
+  # Web-compatible speech recognition (uses browser's Web Speech API)
+  speech_to_text: ^7.2.0
 
 dev_dependencies:
   flutter_test:

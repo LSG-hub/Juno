@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/chat_provider.dart';
 import '../services/auth_service.dart';
+import '../services/voice_service.dart';
 import '../widgets/message_widget.dart';
 import '../widgets/typing_indicator.dart';
 import '../widgets/user_selector_widget.dart';
+import '../widgets/voice_button.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -17,11 +19,36 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _textController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final FocusNode _focusNode = FocusNode();
+  final VoiceService _voiceService = VoiceService();
   String _selectedUserId = '1111111111'; // Default test user
+
+  // All 16 test phone numbers from Fi MCP server
+  static const List<String> _testUsers = [
+    '1010101010',
+    '1111111111',
+    '1212121212',
+    '1313131313',
+    '1414141414',
+    '2020202020',
+    '2121212121',
+    '2222222222',
+    '2525252525',
+    '3333333333',
+    '4444444444',
+    '5555555555',
+    '6666666666',
+    '7777777777',
+    '8888888888',
+    '9999999999',
+  ];
 
   @override
   void initState() {
     super.initState();
+
+    // Initialize voice service for web
+    _initializeVoice();
+
     // Initialize chat provider and reset for new auth session
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final chatProvider = context.read<ChatProvider>();
@@ -35,7 +62,23 @@ class _ChatScreenState extends State<ChatScreen> {
       if (authService.firebaseUID != null) {
         chatProvider.switchToUser(_selectedUserId, authService.firebaseUID!);
       }
+
+      _textController.addListener(() => setState(() {}));
     });
+  }
+
+  Future<void> _initializeVoice() async {
+    final success = await _voiceService.initialize();
+    debugPrint('Voice service initialized: $success');
+
+    if (!success && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Voice input requires Chrome/Edge browser with HTTPS'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
   }
 
   @override
@@ -43,6 +86,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _textController.dispose();
     _scrollController.dispose();
     _focusNode.dispose();
+    _voiceService.dispose();
     super.dispose();
   }
 
@@ -60,16 +104,22 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  void _onVoiceResult(String text) {
+    if (text.isNotEmpty) {
+      _textController.text = text;
+      _sendMessage();
+    }
+  }
+
   void _onUserChanged(String userId) async {
     final authService = context.read<AuthService>();
     final chatProvider = context.read<ChatProvider>();
     
-    // Switch to the selected user's chat history
-    await chatProvider.switchToUser(userId, authService.firebaseUID ?? '');
-    
     setState(() {
       _selectedUserId = userId;
     });
+
+    await chatProvider.switchToUser(userId, authService.firebaseUID ?? '');
   }
 
   void _scrollToBottom() {
@@ -236,21 +286,75 @@ class _ChatScreenState extends State<ChatScreen> {
         surfaceTintColor: theme.colorScheme.surfaceTint,
         elevation: 0,
       ),
-      body: Column(
-        children: [
-          Expanded(
-            child: Consumer<ChatProvider>(
-              builder: (context, chatProvider, child) {
-                if (chatProvider.connectionError != null) {
-                  return _buildErrorState(chatProvider);
-                }
-                
-                return _buildChatList(chatProvider);
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              const Color(0xFF1A4A3A), // Deep green
+              const Color(0xFF1A1A4A), // Deep blue
+            ],
+          ),
+        ),
+        child: Column(
+          children: [
+            // Voice status indicator
+            ListenableBuilder(
+              listenable: _voiceService,
+              builder: (context, child) {
+                if (!_voiceService.isListening) return const SizedBox.shrink();
+
+                return Container(
+                  padding: const EdgeInsets.all(16),
+                  color: const Color(0xFF00C896).withOpacity(0.1),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF00C896),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(
+                          Icons.mic,
+                          color: Colors.white,
+                          size: 16,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          _voiceService.currentTranscript.isEmpty
+                              ? 'Listening...'
+                              : _voiceService.currentTranscript,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
               },
             ),
-          ),
-          _buildInputArea(),
-        ],
+
+            Expanded(
+              child: Consumer<ChatProvider>(
+                builder: (context, chatProvider, child) {
+                  if (chatProvider.connectionError != null) {
+                    return _buildErrorState(chatProvider);
+                  }
+                  
+                  return _buildChatList(chatProvider);
+                },
+              ),
+            ),
+            _buildInputArea(),
+          ],
+        ),
       ),
     );
   }
@@ -320,16 +424,21 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget _buildInputArea() {
-    final theme = Theme.of(context);
-    
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: theme.colorScheme.surface,
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.transparent,
+            const Color(0xFF1A4A3A).withOpacity(0.9),
+          ],
+        ),
         boxShadow: [
           BoxShadow(
-            color: theme.shadowColor.withValues(alpha: 0.1),
-            blurRadius: 8,
+            color: Colors.black.withOpacity(0.2),
+            blurRadius: 10,
             offset: const Offset(0, -2),
           ),
         ],
@@ -339,77 +448,94 @@ class _ChatScreenState extends State<ChatScreen> {
           builder: (context, chatProvider, child) {
             return Row(
               children: [
-                Expanded(
-                  child: TextField(
-                    controller: _textController,
-                    focusNode: _focusNode,
-                    enabled: chatProvider.isConnected,
-                    decoration: InputDecoration(
-                      hintText: chatProvider.isConnected
-                          ? 'Ask me about your finances...'
-                          : 'Connecting to Juno...',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(24),
-                        borderSide: BorderSide.none,
-                      ),
-                      filled: true,
-                      fillColor: theme.colorScheme.surfaceContainerHighest,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 20,
-                        vertical: 12,
-                      ),
-                      suffixIcon: _textController.text.isNotEmpty
-                          ? IconButton(
-                              onPressed: () {
-                                _textController.clear();
-                                setState(() {});
-                              },
-                              icon: const Icon(Icons.clear),
-                            )
-                          : null,
-                    ),
-                    textInputAction: TextInputAction.send,
-                    onSubmitted: chatProvider.isConnected ? (_) => _sendMessage() : null,
-                    onChanged: (text) {
-                      setState(() {}); // Rebuild to show/hide clear button
-                    },
-                    maxLines: null,
-                    textCapitalization: TextCapitalization.sentences,
+                // Voice button
+                ChangeNotifierProvider.value(
+                  value: _voiceService,
+                  child: VoiceButton(
+                    onTextReceived: _onVoiceResult,
+                    isEnabled: chatProvider.isConnected,
                   ),
                 ),
-                const SizedBox(width: 8),
-                ValueListenableBuilder<TextEditingValue>(
-                  valueListenable: _textController,
-                  builder: (context, value, child) {
-                    final hasText = value.text.trim().isNotEmpty;
-                    return AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      child: FloatingActionButton(
-                        onPressed: hasText && chatProvider.isConnected
-                            ? _sendMessage
-                            : null,
-                        backgroundColor: hasText && chatProvider.isConnected
-                            ? theme.colorScheme.primary
-                            : theme.colorScheme.surfaceContainerHighest,
-                        foregroundColor: hasText && chatProvider.isConnected
-                            ? theme.colorScheme.onPrimary
-                            : theme.colorScheme.onSurfaceVariant,
-                        mini: true,
-                        child: chatProvider.isTyping
-                            ? SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation<Color>(
-                                    theme.colorScheme.onPrimary,
-                                  ),
+                const SizedBox(width: 12),
+
+                // Text input
+                Expanded(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF2A2A2A).withOpacity(0.8),
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(
+                        color: const Color(0xFF404040),
+                        width: 1,
+                      ),
+                    ),
+                    child: TextField(
+                      controller: _textController,
+                      focusNode: _focusNode,
+                      enabled: chatProvider.isConnected,
+                      decoration: InputDecoration(
+                        hintText: chatProvider.isConnected
+                            ? 'Ask Juno about your finances...'
+                            : 'Connecting...',
+                        hintStyle: TextStyle(
+                          color: const Color(0xFFB0B0B0),
+                        ),
+                        border: InputBorder.none,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 12,
+                        ),
+                        suffixIcon: _textController.text.isNotEmpty
+                            ? IconButton(
+                                onPressed: () {
+                                  _textController.clear();
+                                  setState(() {});
+                                },
+                                icon: Icon(
+                                  Icons.clear_rounded,
+                                  color: const Color(0xFFB0B0B0),
+                                  size: 20,
                                 ),
                               )
-                            : const Icon(Icons.send),
+                            : null,
                       ),
-                    );
-                  },
+                      style: const TextStyle(color: Colors.white),
+                      onSubmitted: (_) => _sendMessage(),
+                      maxLines: null,
+                      textCapitalization: TextCapitalization.sentences,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+
+                // Send button
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: _textController.text.trim().isNotEmpty && chatProvider.isConnected
+                          ? [const Color(0xFF00C896), const Color(0xFF6366F1)]
+                          : [Colors.grey.shade300, Colors.grey.shade400],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(24),
+                      onTap: _textController.text.trim().isNotEmpty && chatProvider.isConnected
+                          ? _sendMessage
+                          : null,
+                      child: const Icon(
+                        Icons.send_rounded,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                    ),
+                  ),
                 ),
               ],
             );

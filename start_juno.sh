@@ -49,11 +49,9 @@ cd ../..
 
 echo "Starting Mobile App..."
 cd mobile_app
-flutter build web --release
-cd build/web
-http-server -p 3000 -c-1 &
+flutter run -d chrome --web-port 3000 --release &
 MOBILE_PID=$!
-cd ../../..
+cd ..
 
 echo "All services started!"
 echo "Fi MCP Server: http://localhost:8090"
