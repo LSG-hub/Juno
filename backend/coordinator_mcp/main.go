@@ -82,207 +82,156 @@ type MCPToolCallResponse struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"content"`
+		IsError bool `json:"isError,omitempty"`
 	} `json:"result"`
-	ID string `json:"id"`
+	Error *struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+	} `json:"error,omitempty"`
 }
 
-// Fi MCP Server configuration
-var fiMCPBaseURL string
-
-// WebSocket upgrader
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins for development
+		return true
 	},
 }
 
-// Initialize Fi MCP configuration
+// Fi MCP configuration
+var (
+	fiMCPBaseURL = ""
+	fiMCPStreamURL = ""
+)
+
+// 🌐 NEW: Translation service global variable
+var translationService *TranslationService
+
+// Initialize Fi MCP configuration from environment
 func initializeFiMCP() {
-	fiMCPURL := os.Getenv("FI_MCP_URL")
-	if fiMCPURL == "" {
-		fiMCPURL = "https://fi-mcp-server-amhclo2grq-uc.a.run.app"
+	// Get Fi MCP URL from environment
+	fiURL := os.Getenv("FI_MCP_URL")
+	if fiURL == "" {
+		fiURL = "http://fi-mcp-server:8080" // Default for docker-compose
 	}
-	fiMCPBaseURL = fiMCPURL
-	log.Printf("✅ Fi MCP Server configured at: %s", fiMCPBaseURL)
+	
+	fiMCPBaseURL = fiURL
+	// Update to use the correct Fi MCP endpoint
+	fiMCPStreamURL = fiURL + "/mcp/stream"
+	
+	log.Printf("📊 Fi MCP configured:")
+	log.Printf("   Base URL: %s", fiMCPBaseURL)
+	log.Printf("   Stream URL: %s", fiMCPStreamURL)
 }
 
-// Call Fi MCP Server tool via HTTP
-func callFiMCPTool(toolName string, userID string) (string, error) {
-	// Create MCP tool call request
-	mcpRequest := MCPToolCallRequest{
+// Fetch financial data from Fi MCP Server via HTTP
+func fetchFiData(userID string, firebaseUID string) string {
+	log.Printf("💰 Fetching Fi data for user: %s", userID)
+
+	// Map userID to phoneNumber for Fi MCP
+	phoneNumber := userID
+	if phoneNumber == "" {
+		phoneNumber = "1111111111" // Default test user
+	}
+
+	// Prepare the HTTP request to Fi MCP
+	toolCallReq := MCPToolCallRequest{
 		JSONRPC: "2.0",
 		Method:  "tools/call",
-		Params: struct {
-			Name      string                 `json:"name"`
-			Arguments map[string]interface{} `json:"arguments"`
-		}{
-			Name: toolName,
-			Arguments: map[string]interface{}{
-				"phone_number": userID, // Fi MCP uses phone_number parameter
-			},
-		},
-		ID: fmt.Sprintf("req_%d", time.Now().UnixNano()),
+		ID:      fmt.Sprintf("fi-data-%d", time.Now().Unix()),
+	}
+	toolCallReq.Params.Name = "fetch_net_worth"
+	toolCallReq.Params.Arguments = map[string]interface{}{
+		"phoneNumber": phoneNumber,
 	}
 
-	// Marshal request to JSON
-	jsonData, err := json.Marshal(mcpRequest)
+	jsonData, err := json.Marshal(toolCallReq)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal MCP request: %v", err)
+		log.Printf("Error marshaling request: %v", err)
+		return ""
 	}
 
-	// Make HTTP request to Fi MCP server
-	url := fmt.Sprintf("%s/mcp/", fiMCPBaseURL)
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return "", fmt.Errorf("failed to create HTTP request: %v", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	log.Printf("📞 Calling Fi MCP tool '%s' for user '%s' at %s", toolName, userID, url)
-
-	// Send request
+	// Make HTTP request to Fi MCP
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := client.Post(fiMCPStreamURL, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
-		return "", fmt.Errorf("failed to call Fi MCP: %v", err)
+		log.Printf("Error calling Fi MCP: %v", err)
+		return ""
 	}
 	defer resp.Body.Close()
 
-	// Read response
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", fmt.Errorf("failed to read Fi MCP response: %v", err)
+		log.Printf("Error reading response: %v", err)
+		return ""
 	}
 
-	if resp.StatusCode != 200 {
-		log.Printf("❌ Fi MCP error: %d - %s", resp.StatusCode, string(body))
-		return "", fmt.Errorf("Fi MCP returned status %d", resp.StatusCode)
+	// Parse the response
+	var mcpResp MCPToolCallResponse
+	if err := json.Unmarshal(body, &mcpResp); err != nil {
+		log.Printf("Error parsing Fi MCP response: %v", err)
+		return ""
 	}
 
-	// Parse MCP response
-	var mcpResponse MCPToolCallResponse
-	if err := json.Unmarshal(body, &mcpResponse); err != nil {
-		// If it's not a proper MCP response, return raw body
-		log.Printf("⚠️ Non-MCP response from Fi server, returning raw content")
-		return string(body), nil
+	// Handle authentication requirement
+	if mcpResp.Error != nil && strings.Contains(mcpResp.Error.Message, "Authentication required") {
+		log.Printf("⚠️  Fi MCP requires authentication")
+		return "Authentication required. Please login to Fi Money to access your financial data."
 	}
 
-	// Extract content from MCP response
-	if len(mcpResponse.Result.Content) > 0 {
-		content := mcpResponse.Result.Content[0].Text
-		log.Printf("✅ Fi MCP response received for user '%s': %d characters", userID, len(content))
-		return content, nil
+	// Extract the financial data
+	if len(mcpResp.Result.Content) > 0 {
+		log.Printf("✅ Successfully fetched Fi data for user %s", userID)
+		return mcpResp.Result.Content[0].Text
 	}
 
-	return "", fmt.Errorf("empty response from Fi MCP")
+	return ""
 }
 
-// Enhanced query processing with REAL financial data fetching
-func processQuery(query, userID, firebaseUID string) string {
-	lowerQuery := strings.ToLower(query)
+// 🌐 UPDATED: Process query with translation support
+func processQuery(query string, userID string, firebaseUID string) string {
+	// Use translation-aware processing
+	response, detectedLang := translationService.ProcessChatWithTranslation(
+		query,
+		func(translatedQuery string) string {
+			// This is your existing processQuery logic, but using translatedQuery
+			return processQueryInternal(translatedQuery, userID, firebaseUID)
+		},
+	)
+
+	// Log the language used
+	if detectedLang != "" && detectedLang != translationService.defaultLanguage {
+		log.Printf("🌐 Response provided in: %s", detectedLang)
+	}
+
+	return response
+}
+
+// 🔄 RENAMED: Original processQuery is now processQueryInternal
+func processQueryInternal(query string, userID string, firebaseUID string) string {
+	log.Printf("📊 Processing query for user %s: %s", userID, query)
+	
+	// Fetch real financial data from Fi MCP Server
+	fiData := fetchFiData(userID, firebaseUID)
 	
 	var enhancedQuery string
-	var fiData string
-	
-	// 🚀 KEY CHANGE: Actually fetch real financial data for money/balance queries
-	if strings.Contains(lowerQuery, "money") || strings.Contains(lowerQuery, "balance") || 
-	   strings.Contains(lowerQuery, "account") || strings.Contains(lowerQuery, "net worth") ||
-	   strings.Contains(lowerQuery, "financial status") || strings.Contains(lowerQuery, "how much") ||
-	   strings.Contains(lowerQuery, "wealth") || strings.Contains(lowerQuery, "assets") {
-		
-		log.Printf("💰 Detected financial data query - fetching real data from Fi MCP")
-		
-		// Call Fi MCP to get actual financial data
-		netWorthData, err := callFiMCPTool("fetch_net_worth", userID)
-		if err != nil {
-			log.Printf("⚠️ Failed to fetch net worth: %v", err)
-			fiData = "I'm having trouble accessing your Fi account data right now. Please make sure you're logged in to Fi. "
-		} else {
-			fiData = fmt.Sprintf("📊 REAL FINANCIAL DATA FROM FI:\n%s\n\n", netWorthData)
-		}
-		
-		enhancedQuery = fmt.Sprintf("💰 REAL FINANCIAL DATA QUERY: %s\n\n%sThe user asked: '%s'\n\nPlease analyze this real financial data from Fi and provide personalized insights and advice based on their actual account balances and net worth.", 
-			query, fiData, query)
-	
-	// 🚀 KEY CHANGE: Fetch real transaction data for spending queries  
-	} else if strings.Contains(lowerQuery, "spend") || strings.Contains(lowerQuery, "transaction") ||
-	         strings.Contains(lowerQuery, "expense") || strings.Contains(lowerQuery, "budget") ||
-	         strings.Contains(lowerQuery, "mutual fund") || strings.Contains(lowerQuery, "investment") {
-		
-		log.Printf("💳 Detected spending/investment query - fetching transaction data from Fi MCP")
-		
-		// Try to get mutual fund transactions
-		transactionData, err := callFiMCPTool("fetch_mf_transactions", userID)
-		if err != nil {
-			log.Printf("⚠️ Failed to fetch transactions: %v", err)
-			// Try bank transactions as fallback
-			bankTxnData, bankErr := callFiMCPTool("fetch_bank_transactions", userID)
-			if bankErr != nil {
-				fiData = "I'm having trouble accessing your transaction data right now. Please make sure you're logged in to Fi. "
-			} else {
-				fiData = fmt.Sprintf("💳 REAL BANK TRANSACTION DATA FROM FI:\n%s\n\n", bankTxnData)
-			}
-		} else {
-			fiData = fmt.Sprintf("📈 REAL MUTUAL FUND TRANSACTION DATA FROM FI:\n%s\n\n", transactionData)
-		}
-		
-		enhancedQuery = fmt.Sprintf("💳 REAL SPENDING/INVESTMENT DATA QUERY: %s\n\n%sThe user asked: '%s'\n\nPlease analyze this real transaction data from Fi and provide insights about their spending patterns and investment behavior.", 
-			query, fiData, query)
-	
-	// 🚀 KEY CHANGE: Fetch real credit data for credit-related queries
-	} else if strings.Contains(lowerQuery, "credit") || strings.Contains(lowerQuery, "score") ||
-	         strings.Contains(lowerQuery, "loan") || strings.Contains(lowerQuery, "debt") ||
-	         strings.Contains(lowerQuery, "emi") {
-		
-		log.Printf("🏦 Detected credit query - fetching credit data from Fi MCP")
-		
-		creditData, err := callFiMCPTool("fetch_credit_report", userID)
-		if err != nil {
-			log.Printf("⚠️ Failed to fetch credit data: %v", err)
-			fiData = "I'm having trouble accessing your credit data right now. Please make sure your credit report is linked to Fi. "
-		} else {
-			fiData = fmt.Sprintf("🏦 REAL CREDIT REPORT DATA FROM FI:\n%s\n\n", creditData)
-		}
-		
-		enhancedQuery = fmt.Sprintf("🏦 REAL CREDIT DATA QUERY: %s\n\n%sThe user asked: '%s'\n\nPlease analyze this real credit data from Fi and provide advice on credit management and loan optimization.", 
-			query, fiData, query)
-	
-	// 🚀 KEY CHANGE: Fetch EPF data for retirement-related queries
-	} else if strings.Contains(lowerQuery, "epf") || strings.Contains(lowerQuery, "provident fund") ||
-	         strings.Contains(lowerQuery, "retirement") || strings.Contains(lowerQuery, "pf") {
-		
-		log.Printf("🏛️ Detected EPF query - fetching EPF data from Fi MCP")
-		
-		epfData, err := callFiMCPTool("fetch_epf_details", userID)
-		if err != nil {
-			log.Printf("⚠️ Failed to fetch EPF data: %v", err)
-			fiData = "I'm having trouble accessing your EPF data right now. Please make sure your EPF account is linked to Fi. "
-		} else {
-			fiData = fmt.Sprintf("🏛️ REAL EPF DATA FROM FI:\n%s\n\n", epfData)
-		}
-		
-		enhancedQuery = fmt.Sprintf("🏛️ REAL EPF DATA QUERY: %s\n\n%sThe user asked: '%s'\n\nPlease analyze this real EPF data from Fi and provide retirement planning advice.", 
-			query, fiData, query)
-	
-	// Greeting detection - no data needed
-	} else if strings.Contains(lowerQuery, "hi") || strings.Contains(lowerQuery, "hello") || 
-	   strings.Contains(lowerQuery, "hey") || strings.Contains(lowerQuery, "good morning") ||
-	   strings.Contains(lowerQuery, "good evening") {
-		enhancedQuery = fmt.Sprintf("👋 USER GREETING: %s\n\nPlease respond with a warm, friendly greeting and briefly introduce yourself as Juno, their AI financial assistant powered by Google Gemini. Mention that you can help with budgeting, investments, savings, credit management, and that you can access their real-time financial data from Fi to provide personalized advice.", query)
-	
-	// General financial query - try to get basic financial overview for context
-	} else {
-		log.Printf("🤔 General query - attempting to fetch basic financial context")
-		
-		// Try to get net worth for context (but don't fail if it doesn't work)
-		netWorthData, err := callFiMCPTool("fetch_net_worth", userID)
-		if err == nil {
-			fiData = fmt.Sprintf("📊 USER'S FINANCIAL CONTEXT FROM FI:\n%s\n\n", netWorthData)
-		}
-		
-		enhancedQuery = fmt.Sprintf("🤔 GENERAL FINANCIAL QUERY: %s\n\n%sUser %s is asking for financial guidance. Provide helpful, personalized advice based on their context (if available) and ask clarifying questions to better understand their specific needs.", 
+	if fiData != "" {
+		// Include real Fi data in the context
+		enhancedQuery = fmt.Sprintf(`User Query: %s
+
+IMPORTANT: You have access to the user's REAL financial data from Fi Money. Use this actual data to provide personalized, accurate financial advice.
+
+Current Financial Data:
+%s
+
+User ID: %s
+
+Based on this real data, provide specific, actionable financial guidance. Reference actual numbers and accounts when giving advice. If the user asks about their finances, use the real data provided above.`, 
 			query, fiData, userID)
+	} else {
+		// No Fi data available
+		enhancedQuery = fmt.Sprintf(`User Query: %s
+
+Note: Unable to fetch user's financial data at this moment. Provide helpful, personalized advice based on their context (if available) and ask clarifying questions to better understand their specific needs.`, 
+			query)
 	}
 
 	// Call Gemini API with enhanced context (including real data)
@@ -312,59 +261,28 @@ func callGeminiAPI(query string, userID string) (string, error) {
 	// Enhanced system prompt emphasizing real data analysis
 	systemPrompt := fmt.Sprintf(`You are Juno, a highly intelligent AI financial assistant powered by Google's Gemini 2.5 Flash. You help users with comprehensive financial guidance using their REAL financial data from Fi Money platform.
 
-🏦 CORE FINANCIAL SERVICES:
-- Personal budgeting and expense tracking using real transaction data
-- Investment portfolio analysis using actual holdings and transaction history
-- Retirement planning using real EPF balances and contribution history
-- Debt management using actual credit reports and loan details
-- Tax planning and optimization based on real investment data
-- Insurance and risk assessment using comprehensive financial profiles
-- Emergency fund planning using actual account balances
-- Financial goal setting using real net worth and income data
+Current user: %s
 
-💡 YOUR PERSONALITY:
-- Friendly, warm, and conversational (like talking to a trusted friend)
-- Professional yet accessible and empathetic
-- Data-driven but focuses on practical, actionable advice
-- Proactive in offering specific, personalized suggestions
-- Clear and concise, avoids jargon, explains complex concepts simply
+IMPORTANT CAPABILITIES:
+- You have access to REAL financial data including net worth, assets, liabilities, investments, and credit information
+- Provide specific advice based on actual numbers from their Fi Money account
+- Reference exact amounts and account types when discussing their finances
+- Give actionable recommendations tailored to their actual financial situation
 
-👤 CURRENT USER CONTEXT:
-- User ID: %s
-- Indian market focus (₹ currency, Indian financial products)
-- Connected to Fi Money platform with real-time financial data access
-- Age group: Likely 25-40 years (typical Fi user demographic)
+Your personality:
+- Professional yet approachable
+- Data-driven and specific (use the real numbers provided)
+- Proactive in identifying opportunities and risks
+- Culturally aware (understand Indian financial context - EPF, mutual funds, FDs, etc.)
 
-🔗 REAL DATA INTEGRATION CAPABILITIES:
-- Access to user's ACTUAL bank account balances from connected accounts
-- Real mutual fund investment holdings and transaction history
-- Actual EPF account balances and contribution records
-- Live credit reports with real credit scores and loan details
-- Comprehensive net worth calculations from real account data
-- Spending pattern analysis from actual transaction histories
+Always:
+1. Use the actual financial data provided to give personalized advice
+2. Reference specific amounts and accounts when relevant
+3. Provide actionable next steps based on their current situation
+4. Be encouraging but realistic about their financial health`, userID)
 
-⭐ CRITICAL INSTRUCTIONS FOR REAL DATA:
-1. When you receive real financial data, analyze it thoroughly and provide SPECIFIC advice based on actual numbers
-2. Reference exact amounts, dates, and percentages from their real data
-3. Don't give generic advice - use their actual financial situation to give tailored recommendations
-4. Point out specific opportunities or risks you see in their real data
-5. If data shows concerning patterns (low savings, high debt, etc.), address them constructively
-6. Use their real account names, investment schemes, and actual transaction patterns in your advice
-
-💰 RESPONSE STYLE:
-- Start with their actual situation summary when you have real data
-- Use specific numbers from their accounts (₹ amounts, percentages, dates)
-- Give actionable next steps they can take immediately
-- Explain WHY your recommendations make sense for their specific situation
-- Be encouraging and supportive while being honest about financial realities
-
-Remember: You have access to their REAL financial data, so make your advice as personalized and specific as possible!`, userID)
-
-	// Prepare the request
-	requestBody := GeminiRequest{
-		SystemInstruction: &GeminiContent{
-			Parts: []GeminiPart{{Text: systemPrompt}},
-		},
+	// Prepare Gemini request
+	geminiReq := GeminiRequest{
 		Contents: []GeminiContent{
 			{
 				Parts: []GeminiPart{{Text: query}},
@@ -375,26 +293,23 @@ Remember: You have access to their REAL financial data, so make your advice as p
 			Temperature:     0.7,
 			TopK:           40,
 			TopP:           0.95,
-			MaxOutputTokens: 1000,
+			MaxOutputTokens: 8192,
+		},
+		SystemInstruction: &GeminiContent{
+			Parts: []GeminiPart{{Text: systemPrompt}},
 		},
 	}
 
-	jsonData, err := json.Marshal(requestBody)
+	jsonData, err := json.Marshal(geminiReq)
 	if err != nil {
 		return "", err
 	}
 
-	// Create request to Gemini API
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=%s", apiKey)
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return "", err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
+	// Call Gemini API
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=%s", apiKey)
+	
 	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := client.Post(url, "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return "", err
 	}
@@ -405,9 +320,9 @@ Remember: You have access to their REAL financial data, so make your advice as p
 		return "", err
 	}
 
-	if resp.StatusCode != 200 {
-		log.Printf("❌ Gemini API error: %d - %s", resp.StatusCode, string(body))
-		return "I'm experiencing some technical difficulties. Please try again in a moment.", nil
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("Gemini API error: %s", string(body))
+		return "I apologize, but I'm having trouble connecting to the AI service. Please try again in a moment.", nil
 	}
 
 	var geminiResp GeminiResponse
@@ -532,7 +447,23 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	log.Println("🔌 WebSocket client disconnected")
 }
 
-// Health check handler
+// 🌐 NEW: Handle supported languages endpoint
+func handleSupportedLanguages(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	
+	languages := translationService.GetSupportedLanguages()
+	enabled := translationService.enabled
+	
+	response := map[string]interface{}{
+		"enabled":   enabled,
+		"languages": languages,
+		"default":   translationService.defaultLanguage,
+	}
+	
+	json.NewEncoder(w).Encode(response)
+}
+
+// 🌐 UPDATED: Health check handler with translation status
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	apiKey := os.Getenv("GEMINI_API_KEY")
 	if apiKey == "" {
@@ -557,18 +488,25 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	
+	// Add translation status
+	translationStatus := "disabled"
+	if translationService != nil && translationService.enabled {
+		translationStatus = "enabled"
+	}
+	
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{
-		"status":    status,
-		"service":   "juno-coordinator-mcp",
-		"version":   "2.1.0-fi-integration",
-		"ai":        "gemini-2.5-flash",
-		"provider":  "Google",
-		"fi_mcp":    fiStatus,
-		"fi_url":    fiMCPBaseURL,
-		"data_mode": "real_financial_data_from_fi",
-		"test_users": "1111111111, 2121212121, 1313131313",
+		"status":      status,
+		"service":     "juno-coordinator-mcp",
+		"version":     "2.1.0-fi-integration",
+		"ai":          "gemini-2.5-flash",
+		"provider":    "Google",
+		"fi_mcp":      fiStatus,
+		"fi_url":      fiMCPBaseURL,
+		"translation": translationStatus,
+		"data_mode":   "real_financial_data_from_fi",
+		"test_users":  "1111111111, 2121212121, 1313131313",
 	})
 }
 
@@ -588,10 +526,10 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 		"ai":          "Gemini 2.5 Flash",
 		"provider":    "Google",
 		"data_source": fiStatus,
-		"endpoints":   "/chat (POST), /ws (WebSocket), /health (GET)",
+		"endpoints":   "/chat (POST), /ws (WebSocket), /health (GET), /languages (GET)",
 		"description": "AI-powered financial assistant with REAL Fi MCP data integration",
 		"hackathon":   "Google Agentic AI Day 2025",
-		"update":      "Now fetches real financial data from Fi MCP Server via HTTP",
+		"update":      "Now with multi-lingual support! Chat in 24+ languages",
 		"test_note":   "Use userID 1111111111, 2121212121, or 1313131313 for different financial scenarios",
 	}
 	json.NewEncoder(w).Encode(response)
@@ -606,6 +544,9 @@ func main() {
 	// 🚀 KEY ADDITION: Initialize Fi MCP configuration
 	log.Printf("🔗 Initializing Fi MCP configuration...")
 	initializeFiMCP()
+
+	// 🌐 NEW: Initialize translation service
+	translationService = NewTranslationService()
 
 	// Check for API key
 	apiKey := os.Getenv("GEMINI_API_KEY")
@@ -633,6 +574,7 @@ func main() {
 	router.HandleFunc("/health", handleHealth).Methods("GET")
 	router.HandleFunc("/chat", handleHTTPChat).Methods("POST", "OPTIONS")
 	router.HandleFunc("/ws", handleWebSocket)
+	router.HandleFunc("/languages", handleSupportedLanguages).Methods("GET") // 🌐 NEW endpoint
 
 	// Apply CORS
 	handler := c.Handler(router)
@@ -654,6 +596,7 @@ func main() {
 	log.Printf("  GET  /health - Health check")
 	log.Printf("  POST /chat - HTTP chat endpoint")
 	log.Printf("  WS   /ws - WebSocket endpoint")
+	log.Printf("  GET  /languages - Supported languages") // 🌐 NEW
 	
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatalf("❌ Server failed to start: %v", err)

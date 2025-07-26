@@ -82,7 +82,7 @@ gcloud run deploy coordinator-mcp \
     --platform managed \
     --region us-central1 \
     --allow-unauthenticated \
-    --set-env-vars "GEMINI_API_KEY=$GEMINI_API_KEY,FI_MCP_URL=$FI_SERVER_URL,CONTEXT_AGENT_URL=$CONTEXT_URL,SECURITY_AGENT_URL=$SECURITY_URL" \
+    --set-env-vars "GEMINI_API_KEY=$GEMINI_API_KEY,FI_MCP_URL=$FI_SERVER_URL,CONTEXT_AGENT_URL=$CONTEXT_URL,SECURITY_AGENT_URL=$SECURITY_URL,ENABLE_TRANSLATION=${ENABLE_TRANSLATION:-false},DEFAULT_LANGUAGE=${DEFAULT_LANGUAGE:-en},GOOGLE_TRANSLATE_API_KEY=${GOOGLE_TRANSLATE_API_KEY:-$GOOGLE_API_KEY}" \
     --memory 1Gi \
     --cpu 2 \
     --max-instances 20

@@ -43,6 +43,11 @@ func main() {
 	httpMux.Handle("/mcp/", streamableServer)
 	httpMux.HandleFunc("/mockWebPage", webPageHandler)
 	httpMux.HandleFunc("/login", loginHandler)
+	httpMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"status":"healthy","service":"fi-mcp-server"}`))
+	})	
 	port := pkg.GetPort()
 	log.Println("starting server on port:", port)
 	if servErr := http.ListenAndServe(fmt.Sprintf(":%s", port), httpMux); servErr != nil {
@@ -108,3 +113,5 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
+
+

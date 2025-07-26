@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Existing Fi MCP Server (Financial Data)
   fi-mcp-server:
@@ -30,21 +28,13 @@ services:
       - FI_MCP_URL=${FI_MCP_URL:-http://fi-mcp-server:8080}
       - CONTEXT_AGENT_URL=${CONTEXT_AGENT_URL:-http://context-agent-mcp:8082}
       - SECURITY_AGENT_URL=${SECURITY_AGENT_URL:-http://security-agent-mcp:8083}
-      # Pass both API keys - coordinator will use whichever is configured in code
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-    depends_on:
-      - fi-mcp-server
-    networks:
-      - juno-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      # NEW: Translation configuration
+      - ENABLE_TRANSLATION=${ENABLE_TRANSLATION:-false}
+      - DEFAULT_LANGUAGE=${DEFAULT_LANGUAGE:-en}
+      - GOOGLE_TRANSLATE_API_KEY=${GOOGLE_TRANSLATE_API_KEY}
 
-  # Context Agent MCP Server (User Context & Fi Integration)
   context-agent-mcp:
     build:
       context: ./backend/context_agent_mcp
