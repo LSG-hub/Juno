@@ -17,6 +17,11 @@ class WebSocketService {
   final Map<String, Completer<Map<String, dynamic>>> _pendingRequests = {};
   final Uuid _uuid = const Uuid();
   bool _isConnected = false;
+  
+  // Store last query details for auto-retry after login
+  String? _lastQuery;
+  String? _lastUserId;
+  String? _lastFirebaseUID;
 
   Stream<ChatMessage> get messageStream => _messageController.stream;
   bool get isConnected => _isConnected;
@@ -121,6 +126,11 @@ class WebSocketService {
       throw Exception('Not connected to backend');
     }
 
+    // Store query details for potential retry after login
+    _lastQuery = message;
+    _lastUserId = userId;
+    _lastFirebaseUID = firebaseUID;
+
     // Don't add user message to stream here - let ChatProvider handle it
     // to avoid duplicates and ensure proper Firestore persistence
 
@@ -206,6 +216,9 @@ class WebSocketService {
         metadata: {
           'type': 'login_required',
           'login_url': loginUrl,
+          'pending_query': _lastQuery, // Store the original query for retry
+          'pending_user_id': _lastUserId, // Store the user ID for retry
+          'pending_firebase_uid': _lastFirebaseUID, // Store Firebase UID for retry
         },
       );
       _messageController.add(loginMessage);
@@ -220,6 +233,17 @@ class WebSocketService {
       );
       _messageController.add(chatMessage);
     }
+  }
+
+  // Retry the last query (used after login)
+  Future<String?> retryLastQuery() async {
+    if (_lastQuery == null || _lastUserId == null) {
+      debugPrint('No query to retry');
+      return null;
+    }
+    
+    debugPrint('Retrying last query: $_lastQuery for user: $_lastUserId');
+    return await sendMessage(_lastQuery!, _lastUserId!, firebaseUID: _lastFirebaseUID);
   }
 
   // Send cleanup request for Firebase user logout

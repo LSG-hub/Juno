@@ -140,6 +140,7 @@ class ChatProvider extends ChangeNotifier {
     }
   }
 
+
   // Save current chat to Firestore
   Future<void> _saveCurrentChatToFirestore() async {
     if (_currentUserId == null || _firebaseUID == null) return;
@@ -208,6 +209,33 @@ class ChatProvider extends ChangeNotifier {
 
       // Send message through WebSocket service with userId and optional firebaseUID
       await _webSocketService.sendMessage(text.trim(), userId, firebaseUID: firebaseUID);
+    } catch (error) {
+      // Add error message
+      final errorMessage = ChatMessage(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        text: "Sorry, I'm having trouble processing your request. Please try again.",
+        isUser: false,
+        timestamp: DateTime.now(),
+        status: MessageStatus.error,
+      );
+      _addMessage(errorMessage);
+    } finally {
+      _isTyping = false;
+      notifyListeners();
+    }
+  }
+
+
+  // Retry the last query after login
+  Future<void> retryLastQuery() async {
+    if (!_isConnected) return;
+    
+    try {
+      _isTyping = true;
+      notifyListeners();
+      
+      // Retry the last query through WebSocket service
+      await _webSocketService.retryLastQuery();
     } catch (error) {
       // Add error message
       final errorMessage = ChatMessage(

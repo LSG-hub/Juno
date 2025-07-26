@@ -19,15 +19,16 @@ import (
 )
 
 type CoordinatorServer struct {
-	mcpServer        *server.MCPServer
-	geminiAPIKey     string
-	fiMCPURL         string
-	contextAgentURL  string
-	securityAgentURL string
-	upgrader         websocket.Upgrader
-	fiMCPClient      *client.Client // Legacy single client (kept for backward compatibility)
-	fiClients        map[string]*client.Client // Pool of Fi clients per user
-	clientsMu        sync.Mutex                // Thread safety for concurrent users
+	mcpServer         *server.MCPServer
+	geminiAPIKey      string
+	fiMCPURL          string
+	contextAgentURL   string
+	securityAgentURL  string
+	upgrader          websocket.Upgrader
+	fiMCPClient       *client.Client // Legacy single client (kept for backward compatibility)
+	fiClients         map[string]*client.Client // Pool of Fi clients per user
+	contextAgentClients map[string]*client.Client // Pool of Context Agent clients per user
+	clientsMu         sync.Mutex                // Thread safety for concurrent users
 }
 
 type ChatMessage struct {
@@ -73,6 +74,45 @@ type GeminiCandidate struct {
 	Content GeminiContent `json:"content"`
 }
 
+// RAG-related structures
+type GeminiEmbeddingRequest struct {
+	Model   string                    `json:"model"`
+	Content GeminiEmbeddingContent    `json:"content"`
+	TaskType string                   `json:"taskType,omitempty"`
+	Title   string                    `json:"title,omitempty"`
+}
+
+type GeminiEmbeddingContent struct {
+	Parts []GeminiEmbeddingPart `json:"parts"`
+}
+
+type GeminiEmbeddingPart struct {
+	Text string `json:"text"`
+}
+
+type GeminiEmbeddingResponse struct {
+	Embedding GeminiEmbeddingData `json:"embedding"`
+}
+
+type GeminiEmbeddingData struct {
+	Values []float64 `json:"values"`
+}
+
+// Enhanced message structure with embeddings
+type EnhancedMessage struct {
+	ID        string    `json:"id"`
+	Text      string    `json:"text"`
+	IsUser    bool      `json:"isUser"`
+	Timestamp time.Time `json:"timestamp"`
+	Status    string    `json:"status"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+	
+	// Embedding fields
+	Embedding            []float64 `json:"embedding,omitempty"`
+	EmbeddingGeneratedAt *time.Time `json:"embedding_generated_at,omitempty"`
+	EmbeddingModel       string    `json:"embedding_model,omitempty"`
+}
+
 type MCPMessage struct {
 	JSONRPC string `json:"jsonrpc"`
 	Method  string `json:"method"`
@@ -85,15 +125,23 @@ type MCPMessage struct {
 func NewCoordinatorServer() *CoordinatorServer {
 	cs := &CoordinatorServer{
 		geminiAPIKey:     os.Getenv("GEMINI_API_KEY"),
-		fiMCPURL:        getEnvWithDefault("FI_MCP_URL", "http://fi-mcp-server:8080"),
-		contextAgentURL:  getEnvWithDefault("CONTEXT_AGENT_URL", "http://context-agent-mcp:8082"),
-		securityAgentURL: getEnvWithDefault("SECURITY_AGENT_URL", "http://security-agent-mcp:8083"),
+		fiMCPURL:        getEnvWithDefault("FI_MCP_URL", "http://localhost:8090"),
+		contextAgentURL:  getEnvWithDefault("CONTEXT_AGENT_URL", "http://localhost:8092"),
+		securityAgentURL: getEnvWithDefault("SECURITY_AGENT_URL", "http://localhost:8093"),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				return true // Allow all origins for development
 			},
 		},
-		fiClients: make(map[string]*client.Client), // Initialize client pool
+		fiClients: make(map[string]*client.Client), // Initialize Fi client pool
+		contextAgentClients: make(map[string]*client.Client), // Initialize Context Agent client pool
+	}
+	
+	// Debug: Check if Gemini API key is loaded
+	if cs.geminiAPIKey == "" {
+		log.Printf("WARNING: GEMINI_API_KEY environment variable is not set - running in demo mode")
+	} else {
+		log.Printf("Gemini API key loaded successfully (length: %d characters)", len(cs.geminiAPIKey))
 	}
 	
 	// Initialize legacy single Fi MCP client for backward compatibility
@@ -206,6 +254,64 @@ func (cs *CoordinatorServer) getOrCreateFiClient(userId string, firebaseUID stri
 	return fiClient, nil
 }
 
+// getOrCreateContextAgentClient returns or creates a persistent Context Agent MCP client for the given userId and optional firebaseUID
+func (cs *CoordinatorServer) getOrCreateContextAgentClient(userId string, firebaseUID string) (*client.Client, error) {
+	cs.clientsMu.Lock()
+	defer cs.clientsMu.Unlock()
+	
+	// Generate appropriate client key (supports both legacy and Firebase modes)
+	clientKey := cs.getClientKey(userId, firebaseUID)
+	
+	// Check if client already exists for this client key
+	if existingClient, exists := cs.contextAgentClients[clientKey]; exists {
+		return existingClient, nil
+	}
+	
+	// Create new Context Agent MCP client
+	var logMsg string
+	if firebaseUID != "" {
+		logMsg = fmt.Sprintf("Creating new Context Agent MCP client for Firebase user %s, Fi user: %s", firebaseUID, userId)
+	} else {
+		logMsg = fmt.Sprintf("Creating new Context Agent MCP client for user: %s (legacy mode)", userId)
+	}
+	log.Printf(logMsg)
+	contextAgentClient, err := client.NewStreamableHttpClient(cs.contextAgentURL + "/mcp/")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Context Agent MCP client for user %s: %w", userId, err)
+	}
+	
+	// Start and initialize the client
+	ctx := context.Background()
+	if err := contextAgentClient.Start(ctx); err != nil {
+		return nil, fmt.Errorf("failed to start Context Agent MCP client for user %s: %w", userId, err)
+	}
+	
+	initRequest := mcp.InitializeRequest{
+		Params: mcp.InitializeParams{
+			ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
+			ClientInfo: mcp.Implementation{
+				Name:    "coordinator-mcp",
+				Version: "0.1.0",
+			},
+		},
+	}
+	_, err = contextAgentClient.Initialize(ctx, initRequest)
+	if err != nil {
+		contextAgentClient.Close()
+		return nil, fmt.Errorf("failed to initialize Context Agent MCP client for user %s: %w", userId, err)
+	}
+	
+	// Store the client in our pool using the appropriate key
+	cs.contextAgentClients[clientKey] = contextAgentClient
+	if firebaseUID != "" {
+		log.Printf("Successfully created and stored Context Agent MCP client for Firebase user %s, Fi user: %s", firebaseUID, userId)
+	} else {
+		log.Printf("Successfully created and stored Context Agent MCP client for user: %s (legacy mode)", userId)
+	}
+	
+	return contextAgentClient, nil
+}
+
 // cleanupFiClients closes and removes inactive Fi clients to free resources
 func (cs *CoordinatorServer) cleanupFiClients() {
 	cs.clientsMu.Lock()
@@ -263,6 +369,30 @@ func (cs *CoordinatorServer) setupMCPServer() {
 		cs.handleProcessQuery,
 	)
 
+	// General conversation tool (routes to Context Agent)
+	cs.mcpServer.AddTool(
+		mcp.NewTool("general_conversation",
+			mcp.WithDescription("Handle general conversation through Context Agent"),
+			mcp.WithString("firebase_uid",
+				mcp.Description("Firebase user ID for data isolation"),
+				mcp.Required(),
+			),
+			mcp.WithString("fi_user_id",
+				mcp.Description("Fi user ID (1010101010-9999999999)"),
+				mcp.Required(),
+			),
+			mcp.WithString("query",
+				mcp.Description("User's conversation query"),
+				mcp.Required(),
+			),
+			mcp.WithString("message_id",
+				mcp.Description("Unique message identifier"),
+				mcp.Required(),
+			),
+		),
+		cs.handleGeneralConversation,
+	)
+
 	cs.mcpServer.AddTool(
 		mcp.NewTool("get_financial_context",
 			mcp.WithDescription("Get user financial context from agents"),
@@ -282,6 +412,22 @@ func (cs *CoordinatorServer) setupMCPServer() {
 			),
 		),
 		cs.handleFetchFinancialData,
+	)
+
+	// Load chat history from Context Agent (for mobile app UI button)
+	cs.mcpServer.AddTool(
+		mcp.NewTool("load_chat_history",
+			mcp.WithDescription("Load chat history for a specific Fi user from Context Agent storage"),
+			mcp.WithString("firebase_uid",
+				mcp.Description("Firebase user ID for data isolation"),
+				mcp.Required(),
+			),
+			mcp.WithString("fi_user_id",
+				mcp.Description("Fi user ID (1010101010-9999999999)"),
+				mcp.Required(),
+			),
+		),
+		cs.handleLoadChatHistory,
 	)
 }
 
@@ -309,8 +455,11 @@ func (cs *CoordinatorServer) handleProcessQuery(ctx context.Context, request mcp
 	// Extract optional firebaseUID for Firebase-enabled clients
 	firebaseUID, _ := arguments["firebaseUID"].(string)
 
-	// Call Gemini API with tools for intelligent response
-	response, err := cs.callGeminiAPIWithTools(query, userId, firebaseUID)
+	// Get RAG context from Context Agent first
+	contextResult := cs.getRAGContextFromContextAgent(query, userId, firebaseUID)
+
+	// Call Gemini API with tools and RAG context
+	response, err := cs.callGeminiAPIWithTools(query, userId, firebaseUID, contextResult)
 	if err != nil {
 		log.Printf("Error calling Gemini API: %v", err)
 		return &mcp.CallToolResult{
@@ -374,6 +523,185 @@ func (cs *CoordinatorServer) handleGetContext(ctx context.Context, request mcp.C
 			},
 		},
 	}, nil
+}
+
+func (cs *CoordinatorServer) handleLoadChatHistory(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	arguments := request.GetArguments()
+	
+	firebaseUID, ok := arguments["firebase_uid"].(string)
+	if !ok || firebaseUID == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: "Error: firebase_uid parameter is required",
+				},
+			},
+			IsError: true,
+		}, nil
+	}
+
+	fiUserID, ok := arguments["fi_user_id"].(string)
+	if !ok || fiUserID == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: "Error: fi_user_id parameter is required",
+				},
+			},
+			IsError: true,
+		}, nil
+	}
+
+	// Call Context Agent MCP to load chat history
+	contextClient, err := cs.getOrCreateContextAgentClient(fiUserID, firebaseUID)
+	if err != nil {
+		log.Printf("Error getting Context Agent client: %v", err)
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: fmt.Sprintf("Error connecting to Context Agent: %v", err),
+				},
+			},
+			IsError: true,
+		}, nil
+	}
+
+	// Call load_chat_history tool on Context Agent
+	toolRequest := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "load_chat_history",
+			Arguments: map[string]interface{}{
+				"firebase_uid": firebaseUID,
+				"fi_user_id":   fiUserID,
+			},
+		},
+	}
+
+	result, err := contextClient.CallTool(ctx, toolRequest)
+	if err != nil {
+		log.Printf("Error calling Context Agent load_chat_history: %v", err)
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: fmt.Sprintf("Error loading chat history: %v", err),
+				},
+			},
+			IsError: true,
+		}, nil
+	}
+
+	log.Printf("Successfully loaded chat history for user %s/%s", firebaseUID, fiUserID)
+
+	// Return the result from Context Agent
+	return result, nil
+}
+
+// Handle general conversation by routing to Context Agent
+func (cs *CoordinatorServer) handleGeneralConversation(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	arguments := request.GetArguments()
+
+	firebaseUID, ok := arguments["firebase_uid"].(string)
+	if !ok || firebaseUID == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: "Error: firebase_uid parameter is required",
+				},
+			},
+			IsError: true,
+		}, nil
+	}
+
+	fiUserID, ok := arguments["fi_user_id"].(string)
+	if !ok || fiUserID == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: "Error: fi_user_id parameter is required",
+				},
+			},
+			IsError: true,
+		}, nil
+	}
+
+	query, ok := arguments["query"].(string)
+	if !ok || query == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: "Error: query parameter is required",
+				},
+			},
+			IsError: true,
+		}, nil
+	}
+
+	messageID, ok := arguments["message_id"].(string)
+	if !ok || messageID == "" {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: "Error: message_id parameter is required",
+				},
+			},
+			IsError: true,
+		}, nil
+	}
+
+	// Route to Context Agent MCP for general conversation
+	contextClient, err := cs.getOrCreateContextAgentClient(fiUserID, firebaseUID)
+	if err != nil {
+		log.Printf("Error getting Context Agent client: %v", err)
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: "I'm having trouble processing your request right now. Please try again.",
+				},
+			},
+			IsError: true,
+		}, nil
+	}
+
+	// Call general_conversation tool on Context Agent
+	toolRequest := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "general_conversation",
+			Arguments: map[string]interface{}{
+				"firebase_uid": firebaseUID,
+				"fi_user_id":   fiUserID,
+				"query":        query,
+				"message_id":   messageID,
+			},
+		},
+	}
+
+	result, err := contextClient.CallTool(ctx, toolRequest)
+	if err != nil {
+		log.Printf("Error calling Context Agent general_conversation: %v", err)
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				mcp.TextContent{
+					Type: "text",
+					Text: "I'm having trouble generating a response right now. Please try again.",
+				},
+			},
+			IsError: true,
+		}, nil
+	}
+
+	log.Printf("Successfully routed general conversation for user %s/%s", firebaseUID, fiUserID)
+
+	// Return the result from Context Agent
+	return result, nil
 }
 
 func (cs *CoordinatorServer) handleFetchFinancialData(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -454,6 +782,40 @@ func (cs *CoordinatorServer) callFiMCPTool(toolName string, userId string, fireb
 	return result, nil
 }
 
+// Context Agent MCP tool call using per-user persistent client
+func (cs *CoordinatorServer) callContextAgentTool(toolName string, userId string, firebaseUID string, functionArgs map[string]interface{}) (*mcp.CallToolResult, error) {
+	// Get or create Context Agent client for this specific user (with Firebase isolation)
+	contextAgentClient, err := cs.getOrCreateContextAgentClient(userId, firebaseUID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get Context Agent client for user %s: %v", userId, err)
+	}
+
+	// Prepare arguments - always include user_id, and merge any Gemini function call args
+	arguments := map[string]any{
+		"user_id": userId, // Always pass user_id to context agent tools
+	}
+	
+	// Merge in any additional arguments from Gemini's function call
+	for key, value := range functionArgs {
+		arguments[key] = value
+	}
+
+	// Call the Context Agent tool using the user's persistent client
+	ctx := context.Background()
+	toolRequest := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      toolName,
+			Arguments: arguments,
+		},
+	}
+	result, err := contextAgentClient.CallTool(ctx, toolRequest)
+	if err != nil {
+		return nil, fmt.Errorf("failed to call Context Agent MCP tool %s for user %s: %w", toolName, userId, err)
+	}
+
+	return result, nil
+}
+
 func (cs *CoordinatorServer) callFiMCP(toolName string, userId string, firebaseUID string) (string, error) {
 	// Call Fi tool for specific user (will return login_required if not authenticated)
 	result, err := cs.callFiMCPTool(toolName, userId, firebaseUID)
@@ -485,16 +847,44 @@ func (cs *CoordinatorServer) callFiMCP(toolName string, userId string, firebaseU
 	return resultText, nil
 }
 
-// Gemini API request with function calls support
-func (cs *CoordinatorServer) callGeminiAPIWithTools(query string, userId string, firebaseUID string) (string, error) {
+func (cs *CoordinatorServer) callContextAgent(toolName string, userId string, firebaseUID string, functionArgs map[string]interface{}) (string, error) {
+	// Call Context Agent tool for specific user
+	result, err := cs.callContextAgentTool(toolName, userId, firebaseUID, functionArgs)
+	if err != nil {
+		return "", err
+	}
+
+	// Extract text content from result
+	var responseText strings.Builder
+	for _, content := range result.Content {
+		if textContent, ok := content.(mcp.TextContent); ok {
+			responseText.WriteString(textContent.Text)
+		}
+	}
+
+	resultText := responseText.String()
+	if resultText == "" {
+		return fmt.Sprintf("Context Agent MCP Result: %v", result.Content), nil
+	}
+
+	// Regular successful response
+	return resultText, nil
+}
+
+// RAG functionality moved to Context Agent MCP - Coordinator now calls Context Agent for all RAG operations
+
+
+// Gemini API request with function calls support and context from Context Agent
+func (cs *CoordinatorServer) callGeminiAPIWithTools(query string, userId string, firebaseUID string, contextResult map[string]interface{}) (string, error) {
 	if cs.geminiAPIKey == "" {
-		return "Hello! I'm Juno, your financial AI assistant. I'm currently running in demo mode. How can I help you with your finances today?", nil
+		return "Hello! I'm Juno, your helpful AI companion. I'm currently running in demo mode. How can I help you today?", nil
 	}
 
 	// Define Fi tools available to Gemini
 	tools := []GeminiTool{
 		{
 			FunctionDeclarations: []GeminiFunction{
+				// Fi MCP Tools
 				{
 					Name:        "fetch_net_worth",
 					Description: "Fetch user's comprehensive net worth including assets, liabilities, and total wealth",
@@ -539,13 +929,16 @@ func (cs *CoordinatorServer) callGeminiAPIWithTools(query string, userId string,
 		},
 	}
 
+	// Build prompt with context from Context Agent (passed as parameter)
+	promptText := cs.buildPromptWithContext(query, contextResult)
+
 	requestBody := GeminiRequest{
 		Contents: []GeminiContent{
 			{
 				Role: "user",
 				Parts: []GeminiPart{
 					{
-						Text: fmt.Sprintf("You are Juno, a helpful financial AI assistant with access to the user's financial data through Fi Money. Please provide a helpful response to this query: %s", query),
+						Text: promptText,
 					},
 				},
 			},
@@ -585,49 +978,261 @@ func (cs *CoordinatorServer) callGeminiAPIWithTools(query string, userId string,
 	// Handle function calls if Gemini wants to call Fi tools
 	if len(geminiResp.Candidates) > 0 {
 		candidate := geminiResp.Candidates[0]
-		var finalResponse strings.Builder
+		
+		// Check if there are any function calls to batch
+		var functionCalls []GeminiFunctionCall
+		var textParts []string
 		
 		for _, part := range candidate.Content.Parts {
 			if part.Text != "" {
-				// Regular text response
-				finalResponse.WriteString(part.Text)
+				textParts = append(textParts, part.Text)
 			} else if part.FunctionCall != nil {
-				// Gemini wants to call a function
-				functionName := part.FunctionCall.Name
-				
-				// Call Fi MCP tool for specific user (with Firebase isolation)
-				toolResult, err := cs.callFiMCP(functionName, userId, firebaseUID)
-				if err != nil {
-					log.Printf("Error calling Fi tool %s for user %s (Firebase: %s): %v", functionName, userId, firebaseUID, err)
-					toolResult = fmt.Sprintf("Error accessing %s data", functionName)
+				functionCalls = append(functionCalls, *part.FunctionCall)
+			}
+		}
+		
+		// If there are function calls, batch them all and make one final Gemini call
+		if len(functionCalls) > 0 {
+			return cs.handleBatchedFunctionCalls(query, functionCalls, userId, firebaseUID, contextResult)
+		}
+		
+		// If no function calls, just return the text response
+		if len(textParts) > 0 {
+			return strings.Join(textParts, "\n"), nil
+		}
+	}
+
+	defaultResponse := "I'm having trouble generating a response right now. Please try again."
+	return defaultResponse, nil
+}
+
+// buildPromptWithContext creates a prompt with context from Context Agent
+func (cs *CoordinatorServer) buildPromptWithContext(query string, contextResult map[string]interface{}) string {
+	var relevantContext []map[string]interface{}
+	
+	// Extract relevant context from contextResult if available
+	if contextResult != nil {
+		if contexts, ok := contextResult["similar_messages"].([]interface{}); ok {
+			for _, ctx := range contexts {
+				if ctxMap, ok := ctx.(map[string]interface{}); ok {
+					relevantContext = append(relevantContext, ctxMap)
 				}
-				
-				// Check if Fi returned login_required - if so, return it directly without Gemini processing
-				if strings.Contains(toolResult, "login_required") {
-					return toolResult, nil
-				}
-				
-				// Continue conversation with tool result
-				followUpResponse, err := cs.callGeminiAPIWithFunctionResult(query, functionName, toolResult, userId, firebaseUID)
-				if err != nil {
-					log.Printf("Error in follow-up call: %v", err)
-					finalResponse.WriteString(fmt.Sprintf("\nI retrieved your %s data but had trouble processing it.", functionName))
-				} else {
-					finalResponse.WriteString(followUpResponse)
+			}
+		}
+	}
+	
+	if len(relevantContext) > 0 {
+		var historicalContext string
+		var recentContext string
+		
+		for _, ctx := range relevantContext {
+			if text, ok := ctx["text"].(string); ok {
+				if isUser, ok := ctx["is_user"].(bool); ok {
+					role := "Assistant"
+					if isUser {
+						role = "User"
+					}
+					
+					contextLine := fmt.Sprintf("- %s: %s\n", role, text)
+					
+					// Separate historical context from recent conversation
+					if source, ok := ctx["source"].(string); ok && source == "historical" {
+						historicalContext += contextLine
+					} else {
+						recentContext += contextLine
+					}
 				}
 			}
 		}
 		
-		result := finalResponse.String()
-		if result != "" {
-			return result, nil
+		// Build context with clear separation
+		var contextText string
+		if historicalContext != "" {
+			contextText += "RELEVANT PAST CONVERSATIONS:\n" + historicalContext + "\n"
+		}
+		if recentContext != "" {
+			contextText += "RECENT CONVERSATION:\n" + recentContext
+		}
+		
+		return fmt.Sprintf(`You are Juno, a warm, empathetic, and intelligent AI companion. You're designed to be a supportive friend who genuinely cares about the user's well-being across all aspects of their life.
+
+## Your Core Personality:
+- **Empathetic & Caring**: Always acknowledge emotions and provide emotional support when needed
+- **Encouraging & Positive**: Help users feel motivated and optimistic about their goals
+- **Intelligent & Helpful**: Provide thoughtful, practical advice across diverse topics
+- **Conversational & Natural**: Chat like a close friend who remembers previous conversations
+- **Balanced**: You're an all-around companion first, with financial expertise when relevant
+
+## Your Capabilities:
+- **Life Companion**: Relationships, mental health, career advice, learning, hobbies, travel, health
+- **Problem Solver**: Help with decisions, planning, creative projects, technical questions
+- **Financial Advisor**: Access real financial data when it would help answer the user's question
+- **Emotional Support**: Listen, validate feelings, offer comfort and encouragement
+
+## When to Use Financial Tools:
+- User explicitly asks about their finances ("What's my net worth?", "Show my transactions")
+- User needs financial data to make decisions ("Can I afford this house?", "Should I invest more?")
+- User asks about purchases, investments, or major financial decisions
+- Context suggests financial information would be helpful for a complete answer
+
+## Interaction Guidelines:
+- **For emotional queries**: Lead with empathy, validate feelings, offer support
+- **For general topics**: Be helpful and engaging without forcing financial topics
+- **For non-financial requests**: Focus completely on the user's actual request (recipes, advice, etc.) - do NOT redirect to financial topics
+- **For financial decisions**: Proactively use financial tools to give informed advice
+- **Remember context**: Reference previous conversations naturally
+- **Stay on topic**: If user asks for recipes, give recipes. If they ask for travel advice, give travel advice. Only mention finances when truly relevant.
+
+%s
+
+CURRENT USER QUERY: %s
+
+Respond as Juno would - warm, helpful, and use your financial tools intelligently when they would help provide better advice.`, contextText, query)
+	} else {
+		return fmt.Sprintf(`You are Juno, a warm, empathetic, and intelligent AI companion. You're designed to be a supportive friend who genuinely cares about the user's well-being across all aspects of their life.
+
+## Your Core Personality:
+- **Empathetic & Caring**: Always acknowledge emotions and provide emotional support when needed
+- **Encouraging & Positive**: Help users feel motivated and optimistic about their goals
+- **Intelligent & Helpful**: Provide thoughtful, practical advice across diverse topics
+- **Conversational & Natural**: Chat like a close friend who remembers previous conversations
+- **Balanced**: You're an all-around companion first, with financial expertise when relevant
+
+## Your Capabilities:
+- **Life Companion**: Relationships, mental health, career advice, learning, hobbies, travel, health
+- **Problem Solver**: Help with decisions, planning, creative projects, technical questions
+- **Financial Advisor**: Access real financial data when it would help answer the user's question
+- **Emotional Support**: Listen, validate feelings, offer comfort and encouragement
+
+## When to Use Financial Tools:
+- User explicitly asks about their finances ("What's my net worth?", "Show my transactions")
+- User needs financial data to make decisions ("Can I afford this house?", "Should I invest more?")
+- User asks about purchases, investments, or major financial decisions
+- Context suggests financial information would be helpful for a complete answer
+
+## Interaction Guidelines:
+- **For emotional queries**: Lead with empathy, validate feelings, offer support
+- **For general topics**: Be helpful and engaging without forcing financial topics
+- **For non-financial requests**: Focus completely on the user's actual request (recipes, advice, etc.) - do NOT redirect to financial topics
+- **For financial decisions**: Proactively use financial tools to give informed advice
+- **Remember context**: Reference previous conversations naturally
+- **Stay on topic**: If user asks for recipes, give recipes. If they ask for travel advice, give travel advice. Only mention finances when truly relevant.
+
+CURRENT USER QUERY: %s
+
+Respond as Juno would - warm, helpful, and use your financial tools intelligently when they would help provide better advice.`, query)
+	}
+}
+
+// handleBatchedFunctionCalls executes all Fi tool calls and makes one final Gemini call with all results
+func (cs *CoordinatorServer) handleBatchedFunctionCalls(originalQuery string, functionCalls []GeminiFunctionCall, userId, firebaseUID string, contextResult map[string]interface{}) (string, error) {
+	log.Printf("Handling %d batched function calls for user %s (Firebase: %s)", len(functionCalls), userId, firebaseUID)
+	
+	// Execute all Fi tool calls and collect results
+	var toolResults []map[string]string
+	
+	for _, functionCall := range functionCalls {
+		functionName := functionCall.Name
+		log.Printf("Calling Fi tool: %s", functionName)
+		
+		// Call Fi MCP tool
+		toolResult, err := cs.callFiMCP(functionName, userId, firebaseUID)
+		if err != nil {
+			log.Printf("Error calling Fi tool %s: %v", functionName, err)
+			toolResult = fmt.Sprintf("Error accessing %s data", functionName)
+		}
+		
+		// Check if Fi returned login_required - if so, return it directly
+		if strings.Contains(toolResult, "login_required") {
+			return toolResult, nil
+		}
+		
+		// Store the tool result
+		toolResults = append(toolResults, map[string]string{
+			"function_name": functionName,
+			"result":       toolResult,
+		})
+	}
+	
+	// Build the conversation with all tool results for one final Gemini call
+	return cs.callGeminiAPIWithAllToolResults(originalQuery, toolResults, contextResult)
+}
+
+// callGeminiAPIWithAllToolResults makes one final Gemini call with all tool results
+func (cs *CoordinatorServer) callGeminiAPIWithAllToolResults(originalQuery string, toolResults []map[string]string, contextResult map[string]interface{}) (string, error) {
+	log.Printf("Making final Gemini call with %d tool results", len(toolResults))
+	
+	// Build conversation with context and all tool results
+	promptText := cs.buildPromptWithContext(originalQuery, contextResult)
+	
+	// Add all tool results to the conversation
+	var toolResultsText strings.Builder
+	toolResultsText.WriteString("\n\nFINANCIAL DATA RETRIEVED:\n")
+	for _, result := range toolResults {
+		toolResultsText.WriteString(fmt.Sprintf("\n**%s:**\n%s\n", result["function_name"], result["result"]))
+	}
+	toolResultsText.WriteString("\nBased on this financial data, please provide a comprehensive and helpful response to the user's query.")
+	
+	finalPrompt := promptText + toolResultsText.String()
+	
+	// Create request without tools (pure conversation)
+	requestBody := GeminiRequest{
+		Contents: []GeminiContent{
+			{
+				Role: "user",
+				Parts: []GeminiPart{
+					{
+						Text: finalPrompt,
+					},
+				},
+			},
+		},
+		// No tools - this is the final response generation
+	}
+
+	jsonData, err := json.Marshal(requestBody)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal final request: %w", err)
+	}
+
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=%s", cs.geminiAPIKey)
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("failed to create final request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to make final request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("final API returned status %d", resp.StatusCode)
+	}
+
+	var geminiResp GeminiResponse
+	if err := json.NewDecoder(resp.Body).Decode(&geminiResp); err != nil {
+		return "", fmt.Errorf("failed to decode final response: %w", err)
+	}
+
+	// Extract the final response
+	if len(geminiResp.Candidates) > 0 {
+		candidate := geminiResp.Candidates[0]
+		for _, part := range candidate.Content.Parts {
+			if part.Text != "" {
+				return part.Text, nil
+			}
 		}
 	}
 
-	return "I'm having trouble generating a response right now. Please try again.", nil
+	return "I retrieved your financial data but had trouble generating a comprehensive response.", nil
 }
 
-// Follow-up call to Gemini with function result
+// Follow-up call to Gemini with function result (DEPRECATED - use handleBatchedFunctionCalls instead)
 func (cs *CoordinatorServer) callGeminiAPIWithFunctionResult(originalQuery, functionName, functionResult, userId, firebaseUID string) (string, error) {
 	log.Printf("Making follow-up Gemini API call for user %s (Firebase: %s) with function result from %s", userId, firebaseUID, functionName)
 	requestBody := GeminiRequest{
@@ -636,7 +1241,7 @@ func (cs *CoordinatorServer) callGeminiAPIWithFunctionResult(originalQuery, func
 				Role: "user",
 				Parts: []GeminiPart{
 					{
-						Text: fmt.Sprintf("You are Juno, a helpful financial AI assistant. The user asked: %s", originalQuery),
+						Text: fmt.Sprintf("You are Juno, a helpful AI companion. The user asked: %s", originalQuery),
 					},
 				},
 			},
@@ -702,6 +1307,50 @@ func (cs *CoordinatorServer) callGeminiAPIWithFunctionResult(originalQuery, func
 	}
 
 	return "I retrieved your financial data but had trouble processing it.", nil
+}
+
+// Determine if a query is financial or general conversation
+func (cs *CoordinatorServer) isFinancialQuery(query string) bool {
+	lowerQuery := strings.ToLower(query)
+	
+	// Financial keywords that indicate the user wants financial data/tools
+	financialKeywords := []string{
+		"net worth", "networth", "wealth", "assets", "liabilities",
+		"bank", "account", "balance", "transaction", "deposit", "withdrawal",
+		"investment", "mutual fund", "sip", "portfolio", "stocks", "equity",
+		"credit", "loan", "debt", "emi", "interest", "repayment",
+		"epf", "provident fund", "retirement", "pension",
+		"budget", "expense", "spending", "income", "salary",
+		"insurance", "policy", "premium", "coverage",
+		"tax", "deduction", "return", "filing",
+		"afford", "buy", "purchase", "cost", "price", "money",
+		"save", "savings", "emergency fund", "goal",
+		"financial", "finance", "advisor", "planning",
+	}
+	
+	// Financial question patterns
+	financialPatterns := []string{
+		"can i afford", "should i buy", "how much do i have", "what's my",
+		"show me my", "check my", "what is my", "how much money",
+		"investment advice", "financial advice", "money management",
+	}
+	
+	// Check for financial keywords
+	for _, keyword := range financialKeywords {
+		if strings.Contains(lowerQuery, keyword) {
+			return true
+		}
+	}
+	
+	// Check for financial patterns
+	for _, pattern := range financialPatterns {
+		if strings.Contains(lowerQuery, pattern) {
+			return true
+		}
+	}
+	
+	// Default to general conversation
+	return false
 }
 
 
@@ -792,18 +1441,172 @@ func (cs *CoordinatorServer) processWebSocketQuery(msg MCPMessage) MCPMessage {
 		log.Printf("Processing query for user: %s (legacy mode)", userId)
 	}
 
-	// Process query with Gemini API + Fi tools available for specific user
-	// Each user will have their own Fi client and authentication session
-	response, err := cs.callGeminiAPIWithTools(query, userId, firebaseUID)
-	if err != nil {
-		log.Printf("Error calling Gemini API with tools for user %s: %v", userId, err)
-		response = "I'm having trouble processing your request right now. Please try again."
+	// STEP 1: ALWAYS get RAG context from Context Agent first (for ALL queries)
+	contextResult := cs.getRAGContextFromContextAgent(query, userId, firebaseUID)
+	
+	// STEP 2: Check if this is a general conversation or financial query
+	isFinancialQuery := cs.isFinancialQuery(query)
+	
+	var response string
+	var err error
+	
+	if isFinancialQuery {
+		// Financial queries: Use Coordinator with Fi tools + RAG context from Context Agent
+		log.Printf("Processing financial query with RAG context")
+		response, err = cs.callGeminiAPIWithTools(query, userId, firebaseUID, contextResult)
+		if err != nil {
+			log.Printf("Error calling Gemini API with tools for user %s: %v", userId, err)
+			response = "I'm having trouble processing your request right now. Please try again."
+		}
+		
+		// Store both user message and assistant response in Context Agent for RAG
+		if response != "" && !strings.Contains(response, "login_required") {
+			cs.storeFinancialConversationInContextAgent(query, response, userId, firebaseUID)
+		}
+	} else {
+		// General queries: Route to Context Agent (which has its own RAG + Gemini integration)
+		log.Printf("Routing general query to Context Agent")
+		messageID := fmt.Sprintf("user_%d", time.Now().UnixNano())
+		generalResult, err := cs.handleGeneralConversation(context.Background(), mcp.CallToolRequest{
+			Params: mcp.CallToolParams{
+				Arguments: map[string]interface{}{
+					"firebase_uid": firebaseUID,
+					"fi_user_id":   userId,
+					"query":        query,
+					"message_id":   messageID,
+				},
+			},
+		})
+		
+		if err != nil || generalResult.IsError {
+			log.Printf("Error in general conversation for user %s: %v", userId, err)
+			response = "I'm having trouble processing your request right now. Please try again."
+		} else {
+			// Extract response from Context Agent result
+			var responseText strings.Builder
+			for _, content := range generalResult.Content {
+				if textContent, ok := content.(mcp.TextContent); ok {
+					responseText.WriteString(textContent.Text)
+				}
+			}
+			response = responseText.String()
+			if response == "" {
+				response = "I'm having trouble generating a response right now. Please try again."
+			}
+		}
 	}
 
 	return MCPMessage{
 		JSONRPC: "2.0",
 		ID:      msg.ID,
 		Result:  map[string]string{"response": response},
+	}
+}
+
+// getRAGContextFromContextAgent retrieves RAG context from Context Agent for any query
+func (cs *CoordinatorServer) getRAGContextFromContextAgent(query string, userId string, firebaseUID string) map[string]interface{} {
+	log.Printf("Retrieving RAG context from Context Agent for query: %s", query)
+	
+	// Get or create Context Agent client
+	contextClient, err := cs.getOrCreateContextAgentClient(userId, firebaseUID)
+	if err != nil {
+		log.Printf("Warning: Failed to get Context Agent client: %v", err)
+		return nil
+	}
+
+	// Call hybrid RAG search on Context Agent
+	toolRequest := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "search_similar_conversations_hybrid",
+			Arguments: map[string]interface{}{
+				"firebase_uid": firebaseUID,
+				"fi_user_id":   userId,
+				"query":        query,
+			},
+		},
+	}
+
+	result, err := contextClient.CallTool(context.Background(), toolRequest)
+	if err != nil {
+		log.Printf("Warning: Failed to get RAG context: %v", err)
+		return nil
+	}
+
+	// Parse the result
+	var responseText strings.Builder
+	for _, content := range result.Content {
+		if textContent, ok := content.(mcp.TextContent); ok {
+			responseText.WriteString(textContent.Text)
+		}
+	}
+
+	var contextResult map[string]interface{}
+	if err := json.Unmarshal([]byte(responseText.String()), &contextResult); err != nil {
+		log.Printf("Warning: Failed to parse RAG context: %v", err)
+		return nil
+	}
+
+	log.Printf("Successfully retrieved RAG context from Context Agent")
+	return contextResult
+}
+
+// storeFinancialConversationInContextAgent stores both user query and assistant response in Context Agent
+func (cs *CoordinatorServer) storeFinancialConversationInContextAgent(userQuery, assistantResponse, userId, firebaseUID string) {
+	log.Printf("Storing financial conversation in Context Agent for user %s", userId)
+	
+	// Get or create Context Agent client
+	contextClient, err := cs.getOrCreateContextAgentClient(userId, firebaseUID)
+	if err != nil {
+		log.Printf("Warning: Failed to get Context Agent client for storage: %v", err)
+		return
+	}
+
+	now := time.Now()
+	
+	// Store user message
+	userMessageID := fmt.Sprintf("user_%d", now.UnixNano())
+	userToolRequest := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "process_message_context",
+			Arguments: map[string]interface{}{
+				"firebase_uid": firebaseUID,
+				"fi_user_id":   userId,
+				"message_id":   userMessageID,
+				"text":         userQuery,
+				"is_user":      true,
+				"timestamp":    now.Format(time.RFC3339),
+				"status":       "sent",
+			},
+		},
+	}
+
+	_, err = contextClient.CallTool(context.Background(), userToolRequest)
+	if err != nil {
+		log.Printf("Warning: Failed to store user message: %v", err)
+	}
+
+	// Store assistant response
+	responseMessageID := fmt.Sprintf("assistant_%d", now.UnixNano()+1)
+	assistantToolRequest := mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name: "process_message_context",
+			Arguments: map[string]interface{}{
+				"firebase_uid": firebaseUID,
+				"fi_user_id":   userId,
+				"message_id":   responseMessageID,
+				"text":         assistantResponse,
+				"is_user":      false,
+				"timestamp":    now.Add(time.Millisecond).Format(time.RFC3339),
+				"status":       "sent",
+			},
+		},
+	}
+
+	_, err = contextClient.CallTool(context.Background(), assistantToolRequest)
+	if err != nil {
+		log.Printf("Warning: Failed to store assistant response: %v", err)
+	} else {
+		log.Printf("Successfully stored financial conversation in Context Agent")
 	}
 }
 
@@ -853,6 +1656,10 @@ func getEnvWithDefault(key, defaultValue string) string {
 	return defaultValue
 }
 
+// RAG Functions - Centralized in Context Agent MCP
+// All RAG functionality (embedding generation, storage, retrieval) is handled by Context Agent MCP
+// Coordinator now acts as a pure orchestrator that calls Context Agent for RAG operations
+
 func main() {
 	coordinator := NewCoordinatorServer()
 	coordinator.setupMCPServer()
@@ -872,7 +1679,7 @@ func main() {
 	)
 	httpMux.Handle("/mcp/", streamableServer)
 
-	port := getEnvWithDefault("PORT", "8081")
+	port := getEnvWithDefault("PORT", "8091")
 	log.Printf("Starting Coordinator MCP Server on port %s", port)
 	log.Printf("WebSocket endpoint: ws://localhost:%s/ws", port)
 	log.Printf("MCP endpoint: http://localhost:%s/mcp/", port)

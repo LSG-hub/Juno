@@ -40,7 +40,7 @@ services:
       timeout: 10s
       retries: 3
 
-  # Context Agent MCP Server (User Context & Fi Integration)
+  # Context Agent MCP Server (User Context & RAG Intelligence)
   context-agent-mcp:
     build:
       context: ./backend/context_agent_mcp
@@ -50,6 +50,7 @@ services:
     environment:
       - PORT=8082
       - FI_MCP_URL=${FI_MCP_URL:-http://fi-mcp-server:8080}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
     depends_on:
       - fi-mcp-server
     networks:

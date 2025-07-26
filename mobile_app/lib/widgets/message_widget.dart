@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:provider/provider.dart';
 import '../models/message.dart';
+import '../services/chat_provider.dart';
 
 class MessageWidget extends StatelessWidget {
   final ChatMessage message;
@@ -128,11 +130,11 @@ class MessageWidget extends StatelessWidget {
               height: 1.4,
             ),
           ),
-          // Show login button for login_required messages
+          // Show login and continue buttons for login_required messages
           if (_isLoginRequiredMessage())
             Padding(
               padding: const EdgeInsets.only(top: 12),
-              child: _buildLoginButton(theme),
+              child: _buildLoginButtons(theme),
             ),
           if (message.status == MessageStatus.sending)
             Padding(
@@ -213,24 +215,55 @@ class MessageWidget extends StatelessWidget {
            message.metadata!['type'] == 'login_required';
   }
 
-  Widget _buildLoginButton(ThemeData theme) {
+  Widget _buildLoginButtons(ThemeData theme) {
     final loginUrl = message.metadata?['login_url'] ?? '';
+    final hasPendingQuery = message.metadata?['pending_query'] != null;
     
-    return SizedBox(
-      width: double.infinity,
-      child: ElevatedButton.icon(
-        onPressed: () => _launchLoginUrl(loginUrl),
-        icon: const Icon(Icons.login, size: 18),
-        label: const Text('Login to Fi Money'),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: theme.colorScheme.primary,
-          foregroundColor: theme.colorScheme.onPrimary,
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-          ),
-        ),
-      ),
+    return Builder(
+      builder: (BuildContext context) {
+        return Column(
+          children: [
+            // Login button
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () => _launchLoginUrl(loginUrl),
+                icon: const Icon(Icons.login, size: 18),
+                label: const Text('Login to Fi Money'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: theme.colorScheme.primary,
+                  foregroundColor: theme.colorScheme.onPrimary,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              ),
+            ),
+            
+            // Continue button (only show if there's a pending query)
+            if (hasPendingQuery) ...[
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: () => _retryLastQuery(context),
+                  icon: const Icon(Icons.refresh, size: 18),
+                  label: Text('Continue with "${message.metadata?['pending_query'] ?? 'last request'}"'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: theme.colorScheme.primary,
+                    side: BorderSide(color: theme.colorScheme.primary),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        );
+      },
     );
   }
 
@@ -247,5 +280,10 @@ class MessageWidget extends StatelessWidget {
     } catch (e) {
       debugPrint('Error launching URL: $e');
     }
+  }
+
+  void _retryLastQuery(BuildContext context) {
+    final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+    chatProvider.retryLastQuery();
   }
 }
