@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:uuid/uuid.dart';
 import '../models/message.dart';
+import 'location_service.dart';
 
 class WebSocketService {
   // Use environment or fallback to localhost for development
@@ -134,6 +135,13 @@ class WebSocketService {
     // Don't add user message to stream here - let ChatProvider handle it
     // to avoid duplicates and ensure proper Firestore persistence
 
+    // Get location context
+    final locationService = LocationService.instance;
+    Map<String, dynamic>? location = await locationService.getCurrentLocation();
+    
+    // Fallback to last known location if current detection fails
+    location ??= locationService.getLastKnownLocation();
+
     // Create MCP JSON-RPC message with userId and optional firebaseUID
     final String requestId = _uuid.v4();
     final Map<String, dynamic> params = {
@@ -144,6 +152,12 @@ class WebSocketService {
     // Add firebaseUID if provided (Firebase-enabled mode)
     if (firebaseUID != null && firebaseUID.isNotEmpty) {
       params['firebaseUID'] = firebaseUID;
+    }
+    
+    // Add location context if available
+    if (location != null && location.isNotEmpty) {
+      params['location_context'] = location;
+      debugPrint('Including location context: ${location['city']}, ${location['state']}');
     }
     
     final Map<String, dynamic> mcpMessage = {

@@ -47,10 +47,10 @@ COORDINATOR_PID=$!
 cd ../..
 
 
-echo "Starting Mobile App..."
+echo "Starting Web App..."
 cd mobile_app
 flutter run -d chrome --web-port 3000 --release &
-MOBILE_PID=$!
+WEB_PID=$!
 cd ..
 
 echo "All services started!"
@@ -58,9 +58,9 @@ echo "Fi MCP Server: http://localhost:8090"
 echo "Context Agent: http://localhost:8092"
 echo "Security Agent: http://localhost:8093"
 echo "Coordinator: http://localhost:8091"
-echo "Mobile App: http://localhost:3000"
+echo "Web App: http://localhost:3000"
 
 
-echo "$FI_PID $CONTEXT_PID $SECURITY_PID $COORDINATOR_PID $MOBILE_PID" > .juno_pids
+echo "$FI_PID $CONTEXT_PID $SECURITY_PID $COORDINATOR_PID $WEB_PID" > .juno_pids
 
 echo "To stop all services, run: ./stop_juno.sh"

@@ -880,49 +880,54 @@ func (cs *CoordinatorServer) callGeminiAPIWithTools(query string, userId string,
 		return "Hello! I'm Juno, your helpful AI companion. I'm currently running in demo mode. How can I help you today?", nil
 	}
 
-	// Define Fi tools available to Gemini
+	// Define Fi tools available to Gemini with better descriptions
 	tools := []GeminiTool{
 		{
 			FunctionDeclarations: []GeminiFunction{
-				// Fi MCP Tools
+				// Fi MCP Tools - USE THESE WHEN USER ASKS ABOUT FINANCES
 				{
 					Name:        "fetch_net_worth",
-					Description: "Fetch user's comprehensive net worth including assets, liabilities, and total wealth",
+					Description: "REQUIRED: Call this when user asks about net worth, total wealth, financial status, affordability, budget planning, or financial overview. Returns comprehensive financial picture including assets and liabilities.",
 					Parameters: map[string]any{
 						"type": "object",
 						"properties": map[string]any{},
+						"required": []any{},
 					},
 				},
 				{
 					Name:        "fetch_bank_transactions",
-					Description: "Fetch user's bank transaction history and account details",
+					Description: "REQUIRED: Call this when user asks about bank accounts, transactions, spending patterns, cash flow, income, expenses, or banking details. Essential for budget analysis.",
 					Parameters: map[string]any{
 						"type": "object",
 						"properties": map[string]any{},
+						"required": []any{},
 					},
 				},
 				{
 					Name:        "fetch_mf_transactions",
-					Description: "Fetch user's mutual fund transactions and investment details",
+					Description: "REQUIRED: Call this when user asks about investments, mutual funds, portfolio, SIPs, returns, or investment planning. Critical for investment advice.",
 					Parameters: map[string]any{
 						"type": "object",
 						"properties": map[string]any{},
+						"required": []any{},
 					},
 				},
 				{
 					Name:        "fetch_credit_report",
-					Description: "Fetch user's credit report including credit score, loan details, and account history",
+					Description: "REQUIRED: Call this when user asks about loans, credit score, debt, EMIs, credit history, or borrowing capacity. Essential for credit-related queries.",
 					Parameters: map[string]any{
 						"type": "object",
 						"properties": map[string]any{},
+						"required": []any{},
 					},
 				},
 				{
 					Name:        "fetch_epf_details",
-					Description: "Fetch user's Employee Provident Fund (EPF) details and balance",
+					Description: "REQUIRED: Call this when user asks about EPF, provident fund, retirement savings, or PF balance. Important for retirement planning.",
 					Parameters: map[string]any{
 						"type": "object",
 						"properties": map[string]any{},
+						"required": []any{},
 					},
 				},
 			},
@@ -1087,7 +1092,9 @@ func (cs *CoordinatorServer) buildPromptWithContext(query string, contextResult 
 
 CURRENT USER QUERY: %s
 
-Respond as Juno would - warm, helpful, and use your financial tools intelligently when they would help provide better advice.`, contextText, query)
+IMPORTANT: If this query is about finances, affordability, money, investments, transactions, loans, or financial planning - YOU MUST call the appropriate financial tools first before responding. Use the real financial data to provide accurate, personalized advice based on the user's actual financial situation.
+
+Respond as Juno would - warm, helpful, and use your financial tools when they would help provide better advice.`, contextText, query)
 	} else {
 		return fmt.Sprintf(`You are Juno, a warm, empathetic, and intelligent AI companion. You're designed to be a supportive friend who genuinely cares about the user's well-being across all aspects of their life.
 
@@ -1104,23 +1111,29 @@ Respond as Juno would - warm, helpful, and use your financial tools intelligentl
 - **Financial Advisor**: Access real financial data when it would help answer the user's question
 - **Emotional Support**: Listen, validate feelings, offer comfort and encouragement
 
-## When to Use Financial Tools:
-- User explicitly asks about their finances ("What's my net worth?", "Show my transactions")
-- User needs financial data to make decisions ("Can I afford this house?", "Should I invest more?")
-- User asks about purchases, investments, or major financial decisions
-- Context suggests financial information would be helpful for a complete answer
+## CRITICAL: When to Use Financial Tools (YOU MUST CALL THESE):
+- **ALWAYS call fetch_net_worth when**: User mentions affordability, budget, finances, money, buying anything, financial status, wealth
+- **ALWAYS call fetch_bank_transactions when**: User asks about spending, income, transactions, cash flow, banking, account details
+- **ALWAYS call fetch_mf_transactions when**: User mentions investments, mutual funds, portfolio, SIPs, returns, investment planning
+- **ALWAYS call fetch_credit_report when**: User asks about loans, credit, debt, EMIs, borrowing, credit score
+- **ALWAYS call fetch_epf_details when**: User mentions EPF, PF, provident fund, retirement planning
+
+## Location-Aware Financial Advice:
+- The user's location context will be provided - use this to give location-specific financial advice
+- Consider local market conditions, regional financial products, and location-based recommendations
+- Integrate location data with financial data for comprehensive advice
 
 ## Interaction Guidelines:
-- **For emotional queries**: Lead with empathy, validate feelings, offer support
-- **For general topics**: Be helpful and engaging without forcing financial topics
-- **For non-financial requests**: Focus completely on the user's actual request (recipes, advice, etc.) - do NOT redirect to financial topics
-- **For financial decisions**: Proactively use financial tools to give informed advice
-- **Remember context**: Reference previous conversations naturally
-- **Stay on topic**: If user asks for recipes, give recipes. If they ask for travel advice, give travel advice. Only mention finances when truly relevant.
+- **For financial queries**: FIRST call the appropriate financial tools, THEN provide advice based on real data
+- **For location + financial queries**: Use both location context AND financial data to provide targeted advice
+- **Important**: DO NOT give financial advice without calling the tools first to get real data
+- **Remember**: You have access to real financial data - use it to provide accurate, personalized advice
 
 CURRENT USER QUERY: %s
 
-Respond as Juno would - warm, helpful, and use your financial tools intelligently when they would help provide better advice.`, query)
+IMPORTANT: If this query is about finances, affordability, money, investments, transactions, loans, or financial planning - YOU MUST call the appropriate financial tools first before responding. Use the real financial data to provide accurate, personalized advice based on the user's actual financial situation.
+
+Respond as Juno would - warm, helpful, and use your financial tools when they would help provide better advice.`, query)
 	}
 }
 
@@ -1309,49 +1322,6 @@ func (cs *CoordinatorServer) callGeminiAPIWithFunctionResult(originalQuery, func
 	return "I retrieved your financial data but had trouble processing it.", nil
 }
 
-// Determine if a query is financial or general conversation
-func (cs *CoordinatorServer) isFinancialQuery(query string) bool {
-	lowerQuery := strings.ToLower(query)
-	
-	// Financial keywords that indicate the user wants financial data/tools
-	financialKeywords := []string{
-		"net worth", "networth", "wealth", "assets", "liabilities",
-		"bank", "account", "balance", "transaction", "deposit", "withdrawal",
-		"investment", "mutual fund", "sip", "portfolio", "stocks", "equity",
-		"credit", "loan", "debt", "emi", "interest", "repayment",
-		"epf", "provident fund", "retirement", "pension",
-		"budget", "expense", "spending", "income", "salary",
-		"insurance", "policy", "premium", "coverage",
-		"tax", "deduction", "return", "filing",
-		"afford", "buy", "purchase", "cost", "price", "money",
-		"save", "savings", "emergency fund", "goal",
-		"financial", "finance", "advisor", "planning",
-	}
-	
-	// Financial question patterns
-	financialPatterns := []string{
-		"can i afford", "should i buy", "how much do i have", "what's my",
-		"show me my", "check my", "what is my", "how much money",
-		"investment advice", "financial advice", "money management",
-	}
-	
-	// Check for financial keywords
-	for _, keyword := range financialKeywords {
-		if strings.Contains(lowerQuery, keyword) {
-			return true
-		}
-	}
-	
-	// Check for financial patterns
-	for _, pattern := range financialPatterns {
-		if strings.Contains(lowerQuery, pattern) {
-			return true
-		}
-	}
-	
-	// Default to general conversation
-	return false
-}
 
 
 
@@ -1435,6 +1405,13 @@ func (cs *CoordinatorServer) processWebSocketQuery(msg MCPMessage) MCPMessage {
 	// Extract optional firebaseUID from parameters (sent by Firebase-enabled mobile app)
 	firebaseUID, _ := params["firebaseUID"].(string)
 	
+	// Extract optional location_context from parameters (sent by location-aware mobile app)
+	var locationContext map[string]interface{}
+	if locationData, ok := params["location_context"].(map[string]interface{}); ok {
+		locationContext = locationData
+		log.Printf("Location context received: %+v", locationContext)
+	}
+	
 	if firebaseUID != "" {
 		log.Printf("Processing query for Firebase user %s, Fi user: %s", firebaseUID, userId)
 	} else {
@@ -1444,56 +1421,41 @@ func (cs *CoordinatorServer) processWebSocketQuery(msg MCPMessage) MCPMessage {
 	// STEP 1: ALWAYS get RAG context from Context Agent first (for ALL queries)
 	contextResult := cs.getRAGContextFromContextAgent(query, userId, firebaseUID)
 	
-	// STEP 2: Check if this is a general conversation or financial query
-	isFinancialQuery := cs.isFinancialQuery(query)
-	
-	var response string
-	var err error
-	
-	if isFinancialQuery {
-		// Financial queries: Use Coordinator with Fi tools + RAG context from Context Agent
-		log.Printf("Processing financial query with RAG context")
-		response, err = cs.callGeminiAPIWithTools(query, userId, firebaseUID, contextResult)
-		if err != nil {
-			log.Printf("Error calling Gemini API with tools for user %s: %v", userId, err)
-			response = "I'm having trouble processing your request right now. Please try again."
+	// Add location context to the query if available
+	queryWithLocation := query
+	if locationContext != nil && len(locationContext) > 0 {
+		locationText := ""
+		if city, ok := locationContext["city"].(string); ok && city != "" {
+			locationText += fmt.Sprintf("City: %s", city)
 		}
-		
-		// Store both user message and assistant response in Context Agent for RAG
-		if response != "" && !strings.Contains(response, "login_required") {
-			cs.storeFinancialConversationInContextAgent(query, response, userId, firebaseUID)
-		}
-	} else {
-		// General queries: Route to Context Agent (which has its own RAG + Gemini integration)
-		log.Printf("Routing general query to Context Agent")
-		messageID := fmt.Sprintf("user_%d", time.Now().UnixNano())
-		generalResult, err := cs.handleGeneralConversation(context.Background(), mcp.CallToolRequest{
-			Params: mcp.CallToolParams{
-				Arguments: map[string]interface{}{
-					"firebase_uid": firebaseUID,
-					"fi_user_id":   userId,
-					"query":        query,
-					"message_id":   messageID,
-				},
-			},
-		})
-		
-		if err != nil || generalResult.IsError {
-			log.Printf("Error in general conversation for user %s: %v", userId, err)
-			response = "I'm having trouble processing your request right now. Please try again."
-		} else {
-			// Extract response from Context Agent result
-			var responseText strings.Builder
-			for _, content := range generalResult.Content {
-				if textContent, ok := content.(mcp.TextContent); ok {
-					responseText.WriteString(textContent.Text)
-				}
+		if state, ok := locationContext["state"].(string); ok && state != "" {
+			if locationText != "" {
+				locationText += ", "
 			}
-			response = responseText.String()
-			if response == "" {
-				response = "I'm having trouble generating a response right now. Please try again."
-			}
+			locationText += fmt.Sprintf("State: %s", state)
 		}
+		if country, ok := locationContext["country"].(string); ok && country != "" {
+			if locationText != "" {
+				locationText += ", "
+			}
+			locationText += fmt.Sprintf("Country: %s", country)
+		}
+		if locationText != "" {
+			queryWithLocation = fmt.Sprintf("USER QUERY: %s\n\nUSER'S CURRENT LOCATION: %s\n\nPlease consider the user's location when providing advice, especially for financial decisions, local market conditions, and region-specific recommendations.", query, locationText)
+		}
+	}
+
+	// STEP 2: Always use Gemini with Fi tools and let it intelligently decide when to call them
+	log.Printf("Processing query with Gemini + Fi tools (intelligent function calling)")
+	response, err := cs.callGeminiAPIWithTools(queryWithLocation, userId, firebaseUID, contextResult)
+	if err != nil {
+		log.Printf("Error calling Gemini API with tools for user %s: %v", userId, err)
+		response = "I'm having trouble processing your request right now. Please try again."
+	}
+	
+	// Store both user message and assistant response in Context Agent for RAG
+	if response != "" && !strings.Contains(response, "login_required") {
+		cs.storeFinancialConversationInContextAgent(query, response, userId, firebaseUID)
 	}
 
 	return MCPMessage{

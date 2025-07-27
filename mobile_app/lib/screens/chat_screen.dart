@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../services/chat_provider.dart';
 import '../services/auth_service.dart';
 import '../services/voice_service.dart';
+import '../services/location_service.dart';
 import '../widgets/message_widget.dart';
 import '../widgets/typing_indicator.dart';
 import '../widgets/user_selector_widget.dart';
@@ -20,7 +21,9 @@ class _ChatScreenState extends State<ChatScreen> {
   final ScrollController _scrollController = ScrollController();
   final FocusNode _focusNode = FocusNode();
   final VoiceService _voiceService = VoiceService();
+  final LocationService _locationService = LocationService.instance;
   String _selectedUserId = '1111111111'; // Default test user
+  bool _locationEnabled = false;
 
   // All 16 test phone numbers from Fi MCP server
   static const List<String> _testUsers = [
@@ -48,6 +51,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
     // Initialize voice service for web
     _initializeVoice();
+
+    // Initialize location service
+    _initializeLocation();
 
     // Initialize chat provider and reset for new auth session
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -78,6 +84,58 @@ class _ChatScreenState extends State<ChatScreen> {
           duration: Duration(seconds: 3),
         ),
       );
+    }
+  }
+
+  Future<void> _initializeLocation() async {
+    try {
+      debugPrint('ChatScreen: Starting location initialization...');
+      final location = await _locationService.getCurrentLocation();
+      debugPrint('ChatScreen: Location result: $location');
+      
+      setState(() {
+        _locationEnabled = location != null && location.isNotEmpty;
+      });
+      
+      if (_locationEnabled && mounted) {
+        final locationDisplay = _locationService.getLocationDisplayString();
+        debugPrint('ChatScreen: Location initialized successfully: $locationDisplay');
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('📍 Location enabled: $locationDisplay'),
+            duration: const Duration(seconds: 3),
+            backgroundColor: const Color(0xFF00C896),
+          ),
+        );
+      } else {
+        debugPrint('ChatScreen: Location not available - continuing without location context');
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('⚠️ Location unavailable - using general financial advice'),
+              duration: Duration(seconds: 2),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('ChatScreen: Location initialization failed: $e');
+      setState(() {
+        _locationEnabled = false;
+      });
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Location error: ${e.toString()}'),
+            duration: const Duration(seconds: 3),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -134,6 +192,22 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  Future<void> _refreshLocation() async {
+    // Clear cached location and try to get fresh location
+    _locationService.clearCache();
+    
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Refreshing location...'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+    }
+    
+    await _initializeLocation();
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -179,7 +253,11 @@ class _ChatScreenState extends State<ChatScreen> {
                       Color color = theme.colorScheme.error;
                       
                       if (chatProvider.isConnected) {
-                        subtitle = '${authService.displayName} • AI Financial Assistant';
+                        String baseSubtitle = '${authService.displayName} • AI Financial Assistant';
+                        if (_locationEnabled) {
+                          baseSubtitle += ' • 📍 Location-aware';
+                        }
+                        subtitle = baseSubtitle;
                         color = theme.colorScheme.primary;
                       } else if (chatProvider.isConnecting) {
                         subtitle = 'Connecting...';
@@ -221,6 +299,9 @@ class _ChatScreenState extends State<ChatScreen> {
                       break;
                     case 'reconnect':
                       chatProvider.reconnect();
+                      break;
+                    case 'refresh_location':
+                      _refreshLocation();
                       break;
                     case 'logout':
                       // Cleanup Fi clients for this Firebase user
@@ -267,6 +348,16 @@ class _ChatScreenState extends State<ChatScreen> {
                         ],
                       ),
                     ),
+                  const PopupMenuItem(
+                    value: 'refresh_location',
+                    child: Row(
+                      children: [
+                        Icon(Icons.location_on),
+                        SizedBox(width: 8),
+                        Text('Refresh Location'),
+                      ],
+                    ),
+                  ),
                   const PopupMenuItem(
                     value: 'logout',
                     child: Row(
