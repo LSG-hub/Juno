@@ -1,4 +1,9 @@
 # Environment Variables (IMPORTANT: Contains API keys)
+.env
+ENV
+
+# Documentation and unused files
+plan/
 
 
 # Docker
