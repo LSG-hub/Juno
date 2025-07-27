@@ -82,17 +82,16 @@ class ChatProvider extends ChangeNotifier {
 
   // Switch to different Fi user's chat history
   Future<void> switchToUser(String userId, String firebaseUID) async {
+    // Save current user's chat to Firestore before switching (if we have valid data)
+    if (_currentUserId != null && _currentUserId != userId && _messages.isNotEmpty && _firebaseUID != null) {
+      await _saveCurrentChatToFirestore();
+    }
+    
     // If Firebase UID changed (different auth method), clear everything
     if (_firebaseUID != null && _firebaseUID != firebaseUID) {
       if (kDebugMode) print('Firebase UID changed from $_firebaseUID to $firebaseUID - clearing chat');
       _messages.clear();
       _currentUserId = null;
-      _firebaseUID = null;
-    }
-    
-    // Save current user's chat to Firestore if switching users (and not clearing due to auth change)
-    if (_currentUserId != null && _currentUserId != userId && _messages.isNotEmpty && _firebaseUID == firebaseUID) {
-      await _saveCurrentChatToFirestore();
     }
     
     _currentUserId = userId;
@@ -107,6 +106,8 @@ class ChatProvider extends ChangeNotifier {
   // Load chat history from Firestore
   Future<void> _loadChatFromFirestore(String userId, String firebaseUID) async {
     try {
+      if (kDebugMode) print('Loading chat for user: $userId, firebaseUID: $firebaseUID');
+      
       final chatDoc = await _firestore
           .collection('users')
           .doc(firebaseUID)
@@ -119,12 +120,14 @@ class ChatProvider extends ChangeNotifier {
       _messages.clear();
       
       if (chatDoc.docs.isNotEmpty) {
+        if (kDebugMode) print('Found ${chatDoc.docs.length} existing messages for user $userId');
         // Load existing messages
         for (var doc in chatDoc.docs) {
           final message = ChatMessage.fromFirestore(doc.data());
           _messages.add(message);
         }
       } else {
+        if (kDebugMode) print('No existing messages for user $userId - adding welcome message');
         // First time for this user - add welcome message
         _addWelcomeMessage();
         // Save welcome message to Firestore
@@ -132,6 +135,8 @@ class ChatProvider extends ChangeNotifier {
           await _saveMessageToFirestore(_messages.last);
         }
       }
+      
+      if (kDebugMode) print('Loaded ${_messages.length} total messages for user $userId');
     } catch (e) {
       if (kDebugMode) print('Error loading chat from Firestore: $e');
       // Fallback to welcome message
