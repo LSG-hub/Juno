@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -57,7 +58,12 @@ type GeminiFunctionCall struct {
 }
 
 type GeminiTool struct {
-	FunctionDeclarations []GeminiFunction `json:"functionDeclarations"`
+	FunctionDeclarations []GeminiFunction `json:"functionDeclarations,omitempty"`
+	GoogleSearch        *GoogleSearch    `json:"google_search,omitempty"`
+}
+
+type GoogleSearch struct {
+	// Empty object enables Google Search for Gemini 2.5+
 }
 
 type GeminiFunction struct {
@@ -880,6 +886,49 @@ func (cs *CoordinatorServer) callGeminiAPIWithTools(query string, userId string,
 		return "Hello! I'm Juno, your helpful AI companion. I'm currently running in demo mode. How can I help you today?", nil
 	}
 
+	// STEP 1: Try with Fi tools first (financial data)
+	log.Printf("STEP 1: Trying with Fi tools for financial data...")
+	fiResponse, fiCalled, err := cs.tryWithFiTools(query, userId, firebaseUID, contextResult)
+	if err != nil {
+		log.Printf("Fi tools request failed: %v", err)
+	}
+	
+	// Check if Fi returned login_required - if so, return immediately (highest priority)
+	if fiResponse != "" && strings.Contains(fiResponse, "login_required") {
+		log.Printf("Fi tools require authentication - returning login_required response")
+		return fiResponse, nil
+	}
+	
+	// STEP 2: Check if we need web search for location-aware data
+	needsWebSearch := cs.shouldUseWebSearch(query)
+	if needsWebSearch {
+		log.Printf("STEP 2: Query needs web search, trying with Google Search...")
+		searchResponse, err := cs.tryWithGoogleSearch(query, contextResult)
+		if err != nil {
+			log.Printf("Google Search request failed: %v", err)
+			// Fallback to Fi response if available
+			if fiCalled && fiResponse != "" {
+				return fiResponse, nil
+			}
+		} else {
+			// If we have both Fi data and search data, combine them
+			if fiCalled && fiResponse != "" {
+				return cs.combineFinancialAndSearchData(query, fiResponse, searchResponse, contextResult)
+			}
+			return searchResponse, nil
+		}
+	}
+	
+	// Return Fi response if that's all we need
+	if fiCalled && fiResponse != "" {
+		return fiResponse, nil
+	}
+	
+	// Fallback: simple conversation without tools
+	return cs.callGeminiAPIWithoutTools(query, contextResult)
+}
+
+func (cs *CoordinatorServer) tryWithFiTools(query string, userId string, firebaseUID string, contextResult map[string]interface{}) (string, bool, error) {
 	// Define Fi tools available to Gemini with better descriptions
 	tools := []GeminiTool{
 		{
@@ -953,13 +1002,13 @@ func (cs *CoordinatorServer) callGeminiAPIWithTools(query string, userId string,
 
 	jsonData, err := json.Marshal(requestBody)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal request: %w", err)
+		return "", false, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
 	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=%s", cs.geminiAPIKey)
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
+		return "", false, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
@@ -967,17 +1016,18 @@ func (cs *CoordinatorServer) callGeminiAPIWithTools(query string, userId string,
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("failed to make request: %w", err)
+		return "", false, fmt.Errorf("failed to make request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("API returned status %d", resp.StatusCode)
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return "", false, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	var geminiResp GeminiResponse
 	if err := json.NewDecoder(resp.Body).Decode(&geminiResp); err != nil {
-		return "", fmt.Errorf("failed to decode response: %w", err)
+		return "", false, fmt.Errorf("failed to decode response: %w", err)
 	}
 
 	// Handle function calls if Gemini wants to call Fi tools
@@ -998,17 +1048,179 @@ func (cs *CoordinatorServer) callGeminiAPIWithTools(query string, userId string,
 		
 		// If there are function calls, batch them all and make one final Gemini call
 		if len(functionCalls) > 0 {
-			return cs.handleBatchedFunctionCalls(query, functionCalls, userId, firebaseUID, contextResult)
+			response, err := cs.handleBatchedFunctionCalls(query, functionCalls, userId, firebaseUID, contextResult)
+			return response, true, err
 		}
 		
 		// If no function calls, just return the text response
 		if len(textParts) > 0 {
-			return strings.Join(textParts, "\n"), nil
+			return strings.Join(textParts, "\n"), false, nil
 		}
 	}
 
-	defaultResponse := "I'm having trouble generating a response right now. Please try again."
-	return defaultResponse, nil
+	return "", false, fmt.Errorf("no valid response received")
+}
+
+// Helper function to determine if a query needs web search
+func (cs *CoordinatorServer) shouldUseWebSearch(query string) bool {
+	searchKeywords := []string{
+		"best areas", "area", "locality", "neighborhood", "property prices", "real estate", "market",
+		"current", "recent", "latest", "trend", "news", "restaurant", "food", "biryani",
+		"where to", "near me", "in bangalore", "in mumbai", "in delhi",
+	}
+	
+	queryLower := strings.ToLower(query)
+	for _, keyword := range searchKeywords {
+		if strings.Contains(queryLower, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+// Function to try Google Search only
+func (cs *CoordinatorServer) tryWithGoogleSearch(query string, contextResult map[string]interface{}) (string, error) {
+	tools := []GeminiTool{
+		{
+			GoogleSearch: &GoogleSearch{},
+		},
+	}
+
+	promptText := cs.buildPromptWithContext(query, contextResult)
+
+	requestBody := GeminiRequest{
+		Contents: []GeminiContent{
+			{
+				Role: "user",
+				Parts: []GeminiPart{
+					{
+						Text: promptText,
+					},
+				},
+			},
+		},
+		Tools: tools,
+	}
+
+	jsonData, err := json.Marshal(requestBody)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal search request: %w", err)
+	}
+
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=%s", cs.geminiAPIKey)
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("failed to create search request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to make search request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("search API returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var geminiResp GeminiResponse
+	if err := json.NewDecoder(resp.Body).Decode(&geminiResp); err != nil {
+		return "", fmt.Errorf("failed to decode search response: %w", err)
+	}
+
+	// Extract response text
+	if len(geminiResp.Candidates) > 0 {
+		candidate := geminiResp.Candidates[0]
+		for _, part := range candidate.Content.Parts {
+			if part.Text != "" {
+				return part.Text, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("no valid search response received")
+}
+
+// Function to call Gemini without any tools (simple conversation)
+func (cs *CoordinatorServer) callGeminiAPIWithoutTools(query string, contextResult map[string]interface{}) (string, error) {
+	promptText := cs.buildPromptWithContext(query, contextResult)
+
+	requestBody := GeminiRequest{
+		Contents: []GeminiContent{
+			{
+				Role: "user",
+				Parts: []GeminiPart{
+					{
+						Text: promptText,
+					},
+				},
+			},
+		},
+		// No tools - simple conversation
+	}
+
+	jsonData, err := json.Marshal(requestBody)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal simple request: %w", err)
+	}
+
+	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=%s", cs.geminiAPIKey)
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("failed to create simple request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to make simple request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("simple API returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var geminiResp GeminiResponse
+	if err := json.NewDecoder(resp.Body).Decode(&geminiResp); err != nil {
+		return "", fmt.Errorf("failed to decode simple response: %w", err)
+	}
+
+	// Extract response text
+	if len(geminiResp.Candidates) > 0 {
+		candidate := geminiResp.Candidates[0]
+		for _, part := range candidate.Content.Parts {
+			if part.Text != "" {
+				return part.Text, nil
+			}
+		}
+	}
+
+	return "I'm having trouble generating a response right now. Please try again.", nil
+}
+
+// Function to combine financial data with search results
+func (cs *CoordinatorServer) combineFinancialAndSearchData(query string, fiResponse string, searchResponse string, contextResult map[string]interface{}) (string, error) {
+	combinedPrompt := fmt.Sprintf(`You have access to both the user's financial data and current web search results. Please provide a comprehensive response that combines both.
+
+USER QUERY: %s
+
+FINANCIAL DATA ANALYSIS:
+%s
+
+WEB SEARCH RESULTS:
+%s
+
+Please provide a unified response that uses both the financial analysis and the current market/location data to give the user the best possible advice.`, query, fiResponse, searchResponse)
+
+	return cs.callGeminiAPIWithoutTools(combinedPrompt, contextResult)
 }
 
 // buildPromptWithContext creates a prompt with context from Context Agent
@@ -1080,6 +1292,13 @@ func (cs *CoordinatorServer) buildPromptWithContext(query string, contextResult 
 - User asks about purchases, investments, or major financial decisions
 - Context suggests financial information would be helpful for a complete answer
 
+## When to Use Google Search:
+- User asks about real estate markets, property prices, or local market conditions
+- User needs current information about local regulations, tax rates, or policies
+- User asks about local financial services, banks, or investment opportunities
+- User wants to compare market trends or get recent financial news
+- User location indicates they need location-specific advice (always consider their location context)
+
 ## Interaction Guidelines:
 - **For emotional queries**: Lead with empathy, validate feelings, offer support
 - **For general topics**: Be helpful and engaging without forcing financial topics
@@ -1118,10 +1337,18 @@ Respond as Juno would - warm, helpful, and use your financial tools when they wo
 - **ALWAYS call fetch_credit_report when**: User asks about loans, credit, debt, EMIs, borrowing, credit score
 - **ALWAYS call fetch_epf_details when**: User mentions EPF, PF, provident fund, retirement planning
 
+## When to Use Google Search:
+- User asks about real estate markets, property prices, or local market conditions
+- User needs current information about local regulations, tax rates, or policies  
+- User asks about local financial services, banks, or investment opportunities
+- User wants to compare market trends or get recent financial news
+- User location indicates they need location-specific advice (always consider their location context)
+
 ## Location-Aware Financial Advice:
 - The user's location context will be provided - use this to give location-specific financial advice
 - Consider local market conditions, regional financial products, and location-based recommendations
 - Integrate location data with financial data for comprehensive advice
+- Use Google Search to get current market data when location-specific information is needed
 
 ## Interaction Guidelines:
 - **For financial queries**: FIRST call the appropriate financial tools, THEN provide advice based on real data
@@ -1157,6 +1384,8 @@ func (cs *CoordinatorServer) handleBatchedFunctionCalls(originalQuery string, fu
 		
 		// Check if Fi returned login_required - if so, return it directly
 		if strings.Contains(toolResult, "login_required") {
+			log.Printf("Fi requires authentication for user %s, tool: %s", userId, functionName)
+			// Return the login_required response as-is so mobile app can handle it
 			return toolResult, nil
 		}
 		
