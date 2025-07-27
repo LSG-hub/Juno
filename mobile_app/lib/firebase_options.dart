@@ -27,10 +27,7 @@ class DefaultFirebaseOptions {
       case TargetPlatform.macOS:
         return macos;
       case TargetPlatform.windows:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for windows - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return windows;
       case TargetPlatform.linux:
         throw UnsupportedError(
           'DefaultFirebaseOptions have not been configured for linux - '
@@ -44,12 +41,12 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyCbFfZYvqbkeZlcK_Padg9hKnO7Xqbl1NI',
-    appId: '1:929051225142:web:1d59d1710c38785ea0bc97',
-    messagingSenderId: '929051225142',
-    projectId: 'juno-financial-assistant',
-    authDomain: 'juno-financial-assistant.firebaseapp.com',
-    storageBucket: 'juno-financial-assistant.firebasestorage.app',
+    apiKey: 'AIzaSyDaXNV3lTLguI75qG5Nz2Nmg-0eHn4mbLc',
+    appId: '1:370725686124:web:7eb567132250a5d5ab0149',
+    messagingSenderId: '370725686124',
+    projectId: 'juno-dikshayadav-41125',
+    authDomain: 'juno-dikshayadav-41125.firebaseapp.com',
+    storageBucket: 'juno-dikshayadav-41125.firebasestorage.app',
   );
 
   static const FirebaseOptions android = FirebaseOptions(
@@ -71,12 +68,22 @@ class DefaultFirebaseOptions {
   );
 
   static const FirebaseOptions macos = FirebaseOptions(
-    apiKey: 'AIzaSyCbFfZYvqbkeZlcK_Padg9hKnO7Xqbl1NI',
-    appId: '1:929051225142:ios:1d59d1710c38785ea0bc97',
-    messagingSenderId: '929051225142',
-    projectId: 'juno-financial-assistant',
-    storageBucket: 'juno-financial-assistant.firebasestorage.app',
-    iosClientId: '929051225142-abc123.apps.googleusercontent.com',
-    iosBundleId: 'com.example.mobile-app',
+    apiKey: 'AIzaSyD-KKjBpwdlU9c2dOK7t6iEEgKCGFww1SU',
+    appId: '1:370725686124:ios:9d5b0949b793598bab0149',
+    messagingSenderId: '370725686124',
+    projectId: 'juno-dikshayadav-41125',
+    storageBucket: 'juno-dikshayadav-41125.firebasestorage.app',
+    iosClientId: '370725686124-cfeqck0ujkhndk03vd57ueo0mbmogu3t.apps.googleusercontent.com',
+    iosBundleId: 'com.example.mobileApp',
   );
+
+  static const FirebaseOptions windows = FirebaseOptions(
+    apiKey: 'AIzaSyDaXNV3lTLguI75qG5Nz2Nmg-0eHn4mbLc',
+    appId: '1:370725686124:web:2914767e7a3d03b5ab0149',
+    messagingSenderId: '370725686124',
+    projectId: 'juno-dikshayadav-41125',
+    authDomain: 'juno-dikshayadav-41125.firebaseapp.com',
+    storageBucket: 'juno-dikshayadav-41125.firebasestorage.app',
+  );
+
 }

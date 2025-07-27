@@ -39,7 +39,7 @@ flutter build web --release \
 
 # Deploy to Firebase Hosting
 echo "🚀 Deploying to Firebase Hosting..."
-firebase deploy --only hosting
+firebase deploy 
 
 # Get the hosting URL
 HOSTING_URL="https://$PROJECT_ID.web.app"
